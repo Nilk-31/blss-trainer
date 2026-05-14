@@ -10,7 +10,7 @@ const outputDir = path.join(rootDir, "docs");
 await fs.rm(outputDir, { recursive: true, force: true });
 await fs.mkdir(path.join(outputDir, "shared"), { recursive: true });
 
-for (const fileName of ["index.html", "styles.css", "i18n.mjs", "gamepad.mjs", "charts.mjs"]) {
+for (const fileName of ["index.html", "styles.css", "i18n.mjs", "gamepad.mjs", "charts.mjs", "preview.png"]) {
   await fs.copyFile(path.join(rendererDir, fileName), path.join(outputDir, fileName));
 }
 
