@@ -1,0 +1,24 @@
+{
+  "name": "blss-trainer",
+  "version": "0.1.0",
+  "description": "Desktop telemetry trainer for BLSS wiggle analysis in Zelda Breath of the Wild.",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/shared/blssAnalyzer.mjs && node --check src/renderer/i18n.mjs && node --check src/renderer/gamepad.mjs && node --check src/renderer/charts.mjs && node --check src/renderer/app.mjs && node scripts/analyzer-smoke.mjs",
+    "build:web": "node scripts/build-web.mjs",
+    "compile": "npm run check && npm run build:web"
+  },
+  "keywords": [
+    "electron",
+    "gamepad",
+    "telemetry",
+    "speedrun",
+    "blss"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^30.5.1"
+  }
+}

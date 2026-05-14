@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BLSS Trainer</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <div class="brand-mark">BT</div>
+          <div>
+            <h1>BLSS Trainer</h1>
+            <p data-i18n="app.subtitle">BOTW telemetry</p>
+          </div>
+        </div>
+
+        <section class="panel compact-panel">
+          <div class="panel-title">
+            <span data-i18n="panel.controller">Controller</span>
+            <span id="connectionBadge" class="badge offline">Offline</span>
+          </div>
+
+          <label class="field">
+            <span data-i18n="field.device">Device</span>
+            <select id="gamepadSelect">
+              <option value="auto">Auto</option>
+            </select>
+          </label>
+
+          <div class="field-grid">
+            <label class="field">
+              <span data-i18n="field.axisX">Axis X</span>
+              <select id="axisXSelect"></select>
+            </label>
+
+            <label class="field">
+              <span data-i18n="field.axisY">Axis Y</span>
+              <select id="axisYSelect"></select>
+            </label>
+          </div>
+
+          <button id="calibrateStickButton" class="secondary-button" type="button" data-i18n="button.calibrateStick">Calibrate left stick</button>
+
+          <label class="field">
+            <span data-i18n="field.buttonB">B button</span>
+            <select id="bButtonSelect"></select>
+          </label>
+
+          <button id="calibrateBButton" class="secondary-button" type="button" data-i18n="button.calibrateB">Calibrate B button</button>
+
+          <label class="field range-field">
+            <span><span data-i18n="field.deadzone">Deadzone</span> <strong id="deadzoneValue">0.08</strong></span>
+            <input id="deadzoneInput" type="range" min="0" max="0.25" step="0.01" value="0.08" />
+          </label>
+
+          <button id="calibrateButton" class="secondary-button" type="button" data-i18n="button.calibrateCenter">Calibrate center</button>
+          <div id="calibrationStatus" class="calibration-status">Ready</div>
+        </section>
+
+        <section class="panel compact-panel">
+          <div class="panel-title">
+            <span data-i18n="panel.session">Session</span>
+            <span id="sessionBadge" class="badge idle">Idle</span>
+          </div>
+
+          <label class="field">
+            <span data-i18n="field.mode">Mode</span>
+            <select id="sessionModeSelect">
+              <option value="timer" data-i18n="mode.timer">3,2,1 + timer</option>
+              <option value="holdB" data-i18n="mode.holdB">Hold B</option>
+            </select>
+          </label>
+
+          <div id="timerOptions" class="field-grid">
+            <label class="field">
+              <span data-i18n="field.countdown">Countdown</span>
+              <select id="countdownSelect">
+                <option value="1">1 s</option>
+                <option value="2">2 s</option>
+                <option value="3" selected>3 s</option>
+                <option value="5">5 s</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span data-i18n="field.duration">Duration</span>
+              <input id="sessionDurationInput" type="number" min="1" max="300" step="1" value="10" />
+            </label>
+          </div>
+
+          <div id="sessionCue" class="cue-readout">READY</div>
+          <div class="time-readout" id="sessionTime">00:00.000</div>
+          <div id="trainingStatus" class="training-status">Ready</div>
+
+          <div class="button-row">
+            <button id="startButton" class="primary-button" type="button" data-i18n="button.start">Start</button>
+            <button id="stopButton" class="secondary-button" type="button" data-i18n="button.stop">Stop</button>
+          </div>
+
+          <button id="resetButton" class="ghost-button" type="button" data-i18n="button.reset">Reset analysis</button>
+        </section>
+
+        <section class="panel compact-panel">
+          <div class="panel-title">
+            <span data-i18n="panel.settings">Settings</span>
+          </div>
+
+          <label class="field">
+            <span data-i18n="field.language">Language</span>
+            <select id="languageSelect">
+              <option value="en" data-i18n="language.en">English</option>
+              <option value="fr" data-i18n="language.fr">French</option>
+            </select>
+          </label>
+
+          <button id="tutorialButton" class="secondary-button" type="button" data-i18n="button.tutorial">Show tutorial</button>
+        </section>
+
+        <section class="panel compact-panel">
+          <div class="panel-title">
+            <span data-i18n="panel.inputs">Live inputs</span>
+          </div>
+
+          <div class="input-grid">
+            <div>
+              <span>X</span>
+              <strong id="rawXValue">0.000</strong>
+            </div>
+            <div>
+              <span>Y</span>
+              <strong id="rawYValue">0.000</strong>
+            </div>
+            <div>
+              <span>B</span>
+              <strong id="bValue">0.00</strong>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" data-i18n="header.eyebrow">BLSS analysis / left stick</p>
+            <h2 data-i18n="header.title">Open wiggle rating</h2>
+          </div>
+          <div class="score-block">
+            <span id="ratingLabel">Waiting</span>
+            <strong id="scoreValue">0</strong>
+          </div>
+        </header>
+
+        <section class="dashboard-grid">
+          <article class="panel visual-panel">
+            <div class="panel-title">
+              <span class="help-label" data-i18n="visual.stick" data-tooltip-key="tooltip.stick">Analog stick</span>
+              <span id="axisAngle">0&deg;</span>
+            </div>
+            <canvas id="stickCanvas" class="stick-canvas"></canvas>
+          </article>
+
+          <article class="panel visual-panel">
+            <div class="panel-title">
+              <span class="help-label" data-i18n="visual.heatmap" data-tooltip-key="tooltip.heatmap">Heatmap</span>
+              <span id="heatmapPeak">0 hits</span>
+            </div>
+            <canvas id="heatmapCanvas" class="stick-canvas"></canvas>
+          </article>
+
+          <article class="panel score-panel">
+            <div class="panel-title">
+              <span class="help-label" data-i18n="scores.title" data-tooltip-key="tooltip.subscores">Subscores</span>
+              <span data-i18n="scores.scale">0-100+</span>
+            </div>
+
+            <div class="score-list">
+              <div class="score-row" data-score="frequency">
+                <span class="help-label" data-i18n="score.frequency" data-tooltip-key="tooltip.frequency">Frequency</span>
+                <div class="meter"><i></i></div>
+                <strong>0</strong>
+              </div>
+              <div class="score-row" data-score="rhythm">
+                <span class="help-label" data-i18n="score.rhythm" data-tooltip-key="tooltip.rhythm">Rhythm</span>
+                <div class="meter"><i></i></div>
+                <strong>0</strong>
+              </div>
+              <div class="score-row" data-score="center">
+                <span class="help-label" data-i18n="score.center" data-tooltip-key="tooltip.center">Center</span>
+                <div class="meter"><i></i></div>
+                <strong>0</strong>
+              </div>
+              <div class="score-row" data-score="bHold">
+                <span class="help-label" data-i18n="score.bHold" data-tooltip-key="tooltip.bHold">B held</span>
+                <div class="meter"><i></i></div>
+                <strong>0</strong>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="metric-strip">
+          <div class="metric">
+            <span class="help-label" data-i18n="metric.osc" data-tooltip-key="tooltip.osc">Osc/s</span>
+            <strong id="oscValue">0.00</strong>
+          </div>
+          <div class="metric">
+            <span class="help-label" data-i18n="metric.direction" data-tooltip-key="tooltip.direction">Directions/s</span>
+            <strong id="dirValue">0.00</strong>
+          </div>
+          <div class="metric">
+            <span class="help-label" data-i18n="metric.centerAverage" data-tooltip-key="tooltip.centerAverage">Average center</span>
+            <strong id="centerValue">0.000</strong>
+          </div>
+          <div class="metric">
+            <span class="help-label" data-i18n="metric.bReleases" data-tooltip-key="tooltip.bReleases">B releases</span>
+            <strong id="releaseValue">0</strong>
+          </div>
+        </section>
+
+        <section class="chart-grid">
+          <article class="panel chart-panel" data-tooltip-key="tooltip.frequencyChart">
+            <canvas id="frequencyChart"></canvas>
+          </article>
+          <article class="panel chart-panel" data-tooltip-key="tooltip.stabilityChart">
+            <canvas id="stabilityChart"></canvas>
+          </article>
+          <article class="panel chart-panel" data-tooltip-key="tooltip.centerChart">
+            <canvas id="centerChart"></canvas>
+          </article>
+        </section>
+
+        <section class="panel review-panel">
+          <div class="panel-title">
+            <span class="help-label" data-i18n="review.title" data-tooltip-key="tooltip.review">Session analysis</span>
+            <span id="sampleCount">0 samples</span>
+          </div>
+
+          <div class="review-grid">
+            <div>
+              <span class="help-label" data-i18n="review.finalScore" data-tooltip-key="tooltip.finalScore">Final score</span>
+              <strong id="finalScore">0</strong>
+            </div>
+            <div>
+              <span class="help-label" data-i18n="review.duration" data-tooltip-key="tooltip.duration">Duration</span>
+              <strong id="finalDuration">00:00.000</strong>
+            </div>
+            <div>
+              <span class="help-label" data-i18n="review.rhythmVariance" data-tooltip-key="tooltip.rhythmVariance">Rhythm variance</span>
+              <strong id="rhythmVariance">0.000</strong>
+            </div>
+            <div>
+              <span class="help-label" data-i18n="review.pauses" data-tooltip-key="tooltip.pauses">Pauses</span>
+              <strong id="pauseValue">0</strong>
+            </div>
+            <div>
+              <span class="help-label" data-i18n="review.centerContour" data-tooltip-key="tooltip.centerContour">Center contour</span>
+              <strong id="contourValue">0%</strong>
+            </div>
+            <div>
+              <span class="help-label" data-i18n="review.stopReason" data-tooltip-key="tooltip.stopReason">Stop reason</span>
+              <strong id="stopReasonValue">Ready</strong>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="tutorialOverlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="tutorialTitle">
+      <div class="modal-panel">
+        <div class="panel-title">
+          <span id="tutorialTitle" data-i18n="tutorial.title">How BLSS Trainer works</span>
+        </div>
+        <ol class="tutorial-list">
+          <li data-i18n="tutorial.step1">Connect your controller, then calibrate the left stick by pushing up, down, left, and right.</li>
+          <li data-i18n="tutorial.step2">Calibrate the B button by clicking the calibration button and pressing B on your controller.</li>
+          <li data-i18n="tutorial.step3">Choose a session mode. Timer mode starts after the countdown. Hold B mode starts when you press B and stops when you release it.</li>
+          <li data-i18n="tutorial.step4">During a run, keep B held and keep the left stick moving. Releasing B or leaving the stick centered too long stops the attempt.</li>
+          <li data-i18n="tutorial.step5">Use the heatmap, center score, rhythm score, and frequency to understand what to improve.</li>
+        </ol>
+        <button id="closeTutorialButton" class="primary-button" type="button" data-i18n="button.close">Got it</button>
+      </div>
+    </div>
+
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>
