@@ -13,6 +13,10 @@ const DEFAULTS = {
   baseSpeedcapWiggles: 60,
   overspeedExtraWigglesPerOsc: 10,
   coastingStickSpeedThreshold: 0.22,
+  speedcapCenterPenaltyRadius: 0.42,
+  speedcapMinimumCenterAcceleration: 0.45,
+  speedcapFullHalfWiggleAmplitude: 1.35,
+  speedcapMinimumAmplitudeAcceleration: 0.35,
   coastingDecayBaseSpeed: 1.521,
   coastingDecayTimeConstantSec: 31.874
 };
@@ -157,7 +161,7 @@ export function analyzeSamples(samples, options = {}) {
   const center = analyzeCenter(crossings, turns, opts);
   const direction = analyzeDirectionSide(perpendicular, radial);
   const inputs = analyzeForbiddenInputs(clean);
-  const speedcap = simulateSpeedcap(clean, turns, radial, opts);
+  const speedcap = simulateSpeedcap(clean, turns, crossings, radial, opts);
   const frequencyScore = frequencySubscore(oscillationsPerSecond, opts);
   const score = computeRating({
     frequencyScore,
@@ -283,11 +287,13 @@ function createEmptyStats(options = DEFAULTS) {
   };
 }
 
-function simulateSpeedcap(samples, turns, radial, opts) {
+function simulateSpeedcap(samples, turns, crossings, radial, opts) {
   let currentSpeed = opts.minBlssSpeed;
   let reachedAtMs = 0;
   let wiggleProgress = 0;
   let pauseSlowdownMs = 0;
+  let accelerationQualityTotal = 0;
+  let accelerationQualityCount = 0;
   let lastTurnTime = samples[0].time;
   let lastTurnIndex = 0;
   let recentTurns = [];
@@ -300,6 +306,7 @@ function simulateSpeedcap(samples, turns, radial, opts) {
 
     while (lastTurnIndex < turns.length && turns[lastTurnIndex].time <= sample.time) {
       const turn = turns[lastTurnIndex];
+      const previousTurn = turns[lastTurnIndex - 1] ?? null;
       recentTurns = recentTurns.filter((time) => turn.time - time <= 1400);
       recentTurns.push(turn.time);
 
@@ -308,7 +315,10 @@ function simulateSpeedcap(samples, turns, radial, opts) {
       if (recentOsc >= opts.minimumAccelerationOscillationsPerSecond) {
         const requiredWiggles = requiredWigglesForFrequency(recentOsc, opts);
         const gainPerHalfWiggle = (opts.speedCap - opts.minBlssSpeed) / requiredWiggles / 2;
-        currentSpeed = Math.min(opts.speedCap * 1.22, currentSpeed + gainPerHalfWiggle);
+        const accelerationQuality = speedcapAccelerationQuality(previousTurn, turn, crossings, opts);
+        currentSpeed = Math.min(opts.speedCap * 1.22, currentSpeed + gainPerHalfWiggle * accelerationQuality);
+        accelerationQualityTotal += accelerationQuality;
+        accelerationQualityCount += 1;
         wiggleProgress += 0.5;
       }
 
@@ -333,10 +343,13 @@ function simulateSpeedcap(samples, turns, radial, opts) {
 
   const durationSec = (samples.at(-1).time - samples[0].time) / 1000;
   const averageOsc = turns.length / Math.max(durationSec, 0.001) / 2;
+  const averageAccelerationQuality =
+    accelerationQualityCount > 0 ? accelerationQualityTotal / accelerationQualityCount : 1;
+  const effectiveAverageOsc = averageOsc * averageAccelerationQuality;
   const requiredWiggles = requiredWigglesForFrequency(Math.max(averageOsc, opts.minimumAccelerationOscillationsPerSecond), opts);
   const estimatedTimeToCapSec =
-    averageOsc >= opts.minimumAccelerationOscillationsPerSecond
-      ? Math.max(12, requiredWiggles / averageOsc)
+    effectiveAverageOsc >= opts.minimumAccelerationOscillationsPerSecond
+      ? Math.max(12, requiredWiggles / effectiveAverageOsc)
       : Infinity;
   const reached = reachedAtMs > 0;
   const timeToCapSec = reached ? reachedAtMs / 1000 : 0;
@@ -364,6 +377,39 @@ function simulateSpeedcap(samples, turns, radial, opts) {
     wiggleProgress,
     pauseSlowdownMs
   };
+}
+
+function speedcapAccelerationQuality(previousTurn, turn, crossings, opts) {
+  if (!previousTurn) {
+    return 1;
+  }
+
+  const centerDistance = centerDistanceBetweenTurns(previousTurn, turn, crossings, opts);
+  const centerPenalty = smoothStep(opts.centerIdealRadius, opts.speedcapCenterPenaltyRadius, centerDistance);
+  const centerFactor = 1 - (1 - opts.speedcapMinimumCenterAcceleration) * centerPenalty;
+  const halfWiggleAmplitude = Math.abs(turn.p - previousTurn.p);
+  const amplitudeFactor =
+    opts.speedcapMinimumAmplitudeAcceleration +
+    (1 - opts.speedcapMinimumAmplitudeAcceleration) *
+      smoothStep(opts.minTurnAmplitude, opts.speedcapFullHalfWiggleAmplitude, halfWiggleAmplitude);
+
+  return clamp(centerFactor * amplitudeFactor, 0, 1);
+}
+
+function centerDistanceBetweenTurns(previousTurn, turn, crossings, opts) {
+  let bestDistance = Infinity;
+
+  for (const crossing of crossings) {
+    if (crossing.time >= previousTurn.time && crossing.time <= turn.time) {
+      bestDistance = Math.min(bestDistance, crossing.distance);
+    }
+  }
+
+  if (Number.isFinite(bestDistance)) {
+    return bestDistance;
+  }
+
+  return Math.max(Math.abs(previousTurn.q), Math.abs(turn.q), opts.centerWarningRadius);
 }
 
 export function requiredWigglesForFrequency(oscillationsPerSecond, options = {}) {

@@ -22,6 +22,36 @@ const weak = generateSession({
 
 const goodStats = analyzeSamples(good);
 const weakStats = analyzeSamples(weak);
+const centeredAccelerationStats = analyzeSamples(
+  generateSession({
+    durationMs: 9000,
+    frequencyHz: 5,
+    amplitude: 0.86,
+    centerNoise: 0.018,
+    sideOffset: 0.02,
+    bDropEveryMs: 0
+  })
+);
+const offCenterAccelerationStats = analyzeSamples(
+  generateSession({
+    durationMs: 9000,
+    frequencyHz: 5,
+    amplitude: 0.86,
+    centerNoise: 0.018,
+    sideOffset: 0.36,
+    bDropEveryMs: 0
+  })
+);
+const shallowAccelerationStats = analyzeSamples(
+  generateSession({
+    durationMs: 9000,
+    frequencyHz: 5,
+    amplitude: 0.34,
+    centerNoise: 0.018,
+    sideOffset: 0.02,
+    bDropEveryMs: 0
+  })
+);
 const coasting = generateSession({
   durationMs: 22000,
   frequencyHz: 5,
@@ -67,6 +97,14 @@ if (goodStats.subScores.frequency <= weakStats.subScores.frequency) {
 
 if (goodStats.speedcap.timeToCapSec < 12) {
   throw new Error("Expected speedcap model to respect the 12s best possible result");
+}
+
+if (centeredAccelerationStats.speedcap.currentSpeed <= offCenterAccelerationStats.speedcap.currentSpeed + 8) {
+  throw new Error("Expected off-center wiggles to accelerate less toward speedcap");
+}
+
+if (centeredAccelerationStats.speedcap.currentSpeed <= shallowAccelerationStats.speedcap.currentSpeed + 8) {
+  throw new Error("Expected shallow wiggles to accelerate less toward speedcap");
 }
 
 if (coastingStats.speedcap.pauseSlowdownMs < 8500) {

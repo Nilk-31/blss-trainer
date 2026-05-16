@@ -54,7 +54,7 @@ During any active attempt, the session stops if B is released or if the left sti
 The score now focuses on the essentials:
 
 - Wiggle frequency, with 5 Osc/s treated as the ideal target. Too slow is weaker, and too fast is penalized harder.
-- Simulated BLSS speed toward the 104.71 m/s speedcap. Between 1 and 5 Osc/s, the model uses 60 wiggles to reach cap; above 5 Osc/s it adds extra required wiggles and never allows an estimated best time below 12 seconds.
+- Simulated BLSS speed toward the 104.71 m/s speedcap. Between 1 and 5 Osc/s, the model uses 60 clean wiggles to reach cap; wiggles that miss the center or use shallow stick travel accelerate less. Above 5 Osc/s it adds extra required wiggles and never allows an estimated best time below 12 seconds.
 - Center crossing quality.
 - B hold quality.
 - Staying on the same steering side of the wiggle.
