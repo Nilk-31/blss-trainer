@@ -1,23 +1,39 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const rootDir = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const rendererDir = path.join(rootDir, "src", "renderer");
 const sharedDir = path.join(rootDir, "src", "shared");
 const outputDir = path.join(rootDir, "docs");
+const execFileAsync = promisify(execFile);
+const buildVersion = await getBuildVersion();
 
 await fs.rm(outputDir, { recursive: true, force: true });
 await fs.mkdir(path.join(outputDir, "shared"), { recursive: true });
 
-for (const fileName of ["index.html", "styles.css", "i18n.mjs", "gamepad.mjs", "charts.mjs", "preview.png"]) {
+for (const fileName of ["styles.css", "i18n.mjs", "gamepad.mjs", "charts.mjs", "preview.png"]) {
   await fs.copyFile(path.join(rendererDir, fileName), path.join(outputDir, fileName));
 }
+
+const indexSource = await fs.readFile(path.join(rendererDir, "index.html"), "utf8");
+await fs.writeFile(
+  path.join(outputDir, "index.html"),
+  indexSource
+    .replace('./styles.css"', `./styles.css?v=${buildVersion}"`)
+    .replace('./app.mjs"', `./app.mjs?v=${buildVersion}"`)
+);
 
 const appSource = await fs.readFile(path.join(rendererDir, "app.mjs"), "utf8");
 await fs.writeFile(
   path.join(outputDir, "app.mjs"),
-  appSource.replace("../shared/blssAnalyzer.mjs", "./shared/blssAnalyzer.mjs")
+  appSource
+    .replace("../shared/blssAnalyzer.mjs", `./shared/blssAnalyzer.mjs?v=${buildVersion}`)
+    .replace("./gamepad.mjs", `./gamepad.mjs?v=${buildVersion}`)
+    .replace("./charts.mjs", `./charts.mjs?v=${buildVersion}`)
+    .replace("./i18n.mjs", `./i18n.mjs?v=${buildVersion}`)
 );
 
 await fs.copyFile(
@@ -27,3 +43,12 @@ await fs.copyFile(
 await fs.writeFile(path.join(outputDir, ".nojekyll"), "");
 
 console.log(`Built static site in ${path.relative(rootDir, outputDir)}`);
+
+async function getBuildVersion() {
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--short", "HEAD"], { cwd: rootDir });
+    return stdout.trim() || Date.now().toString(36);
+  } catch {
+    return Date.now().toString(36);
+  }
+}
