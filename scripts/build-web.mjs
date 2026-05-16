@@ -46,8 +46,10 @@ console.log(`Built static site in ${path.relative(rootDir, outputDir)}`);
 
 async function getBuildVersion() {
   try {
-    const { stdout } = await execFileAsync("git", ["rev-parse", "--short", "HEAD"], { cwd: rootDir });
-    return stdout.trim() || Date.now().toString(36);
+    const { stdout: commitStdout } = await execFileAsync("git", ["rev-parse", "--short", "HEAD"], { cwd: rootDir });
+    const { stdout: statusStdout } = await execFileAsync("git", ["status", "--short"], { cwd: rootDir });
+    const commit = commitStdout.trim() || Date.now().toString(36);
+    return statusStdout.trim() ? `${commit}-${Date.now().toString(36)}` : commit;
   } catch {
     return Date.now().toString(36);
   }

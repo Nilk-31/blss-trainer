@@ -12,7 +12,7 @@ const DEFAULTS = {
   minimumAccelerationOscillationsPerSecond: 1,
   baseSpeedcapWiggles: 60,
   overspeedExtraWigglesPerOsc: 10,
-  slowWiggleDecayThresholdOscillationsPerSecond: 0.5,
+  coastingStickSpeedThreshold: 0.22,
   coastingDecayBaseSpeed: 1.521,
   coastingDecayTimeConstantSec: 31.874
 };
@@ -291,11 +291,12 @@ function simulateSpeedcap(samples, turns, radial, opts) {
   let lastTurnTime = samples[0].time;
   let lastTurnIndex = 0;
   let recentTurns = [];
-  const slowWigglePauseMs = slowWigglePauseMsForThreshold(opts);
 
   for (let index = 1; index < samples.length; index += 1) {
     const sample = samples[index];
     const dtMs = Math.max(0, sample.time - samples[index - 1].time);
+    const dtSec = Math.max(dtMs / 1000, 1 / 240);
+    const stickSpeed = Math.hypot(sample.x - samples[index - 1].x, sample.y - samples[index - 1].y) / dtSec;
 
     while (lastTurnIndex < turns.length && turns[lastTurnIndex].time <= sample.time) {
       const turn = turns[lastTurnIndex];
@@ -315,9 +316,12 @@ function simulateSpeedcap(samples, turns, radial, opts) {
       lastTurnIndex += 1;
     }
 
-    const noWiggleMs = sample.time - lastTurnTime;
-
-    if (sample.bPressed && radial[index] > opts.neutralRadius && wiggleProgress > 0 && noWiggleMs >= slowWigglePauseMs) {
+    if (
+      sample.bPressed &&
+      radial[index] > opts.neutralRadius &&
+      wiggleProgress > 0 &&
+      stickSpeed <= opts.coastingStickSpeedThreshold
+    ) {
       pauseSlowdownMs += dtMs;
       currentSpeed = decayBlssSpeed(currentSpeed, dtMs / 1000, opts);
     }
@@ -374,11 +378,6 @@ export function requiredWigglesForFrequency(oscillationsPerSecond, options = {})
     opts.baseSpeedcapWiggles + (osc - opts.optimalOscillationsPerSecond) * opts.overspeedExtraWigglesPerOsc;
 
   return Math.max(overspeedRequired, 12 * osc);
-}
-
-function slowWigglePauseMsForThreshold(opts) {
-  const threshold = Math.max(0, opts.slowWiggleDecayThresholdOscillationsPerSecond);
-  return threshold > 0 ? 1000 / (threshold * 2) : Infinity;
 }
 
 function decayBlssSpeed(currentSpeed, elapsedSec, opts) {

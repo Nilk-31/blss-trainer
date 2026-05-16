@@ -31,7 +31,17 @@ const coasting = generateSession({
   bDropEveryMs: 0,
   stopWiggleAtMs: 12000
 });
+const instantCoasting = generateSession({
+  durationMs: 12300,
+  frequencyHz: 5,
+  amplitude: 0.86,
+  centerNoise: 0.018,
+  sideOffset: 0.16,
+  bDropEveryMs: 0,
+  stopWiggleAtMs: 12000
+});
 const coastingStats = analyzeSamples(coasting);
+const instantCoastingStats = analyzeSamples(instantCoasting);
 const coastingStartTime = coasting.at(-1).time - coastingStats.speedcap.pauseSlowdownMs;
 const preCoastingStats = analyzeSamples(coasting.filter((sample) => sample.time <= coastingStartTime));
 const expectedCoastingSpeed = expectedDecaySpeed(
@@ -61,6 +71,10 @@ if (goodStats.speedcap.timeToCapSec < 12) {
 
 if (coastingStats.speedcap.pauseSlowdownMs < 8500) {
   throw new Error("Expected stopped wiggle with held B to enter coasting decay");
+}
+
+if (instantCoastingStats.speedcap.pauseSlowdownMs < 200) {
+  throw new Error("Expected stopped wiggle with held B to decay immediately without waiting for a slow Osc/s timeout");
 }
 
 if (Math.abs(coastingStats.speedcap.currentSpeed - expectedCoastingSpeed) > 0.6) {
