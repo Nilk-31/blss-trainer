@@ -8,6 +8,16 @@ export class GamepadReader {
     this.axisXScale = 1;
     this.axisYScale = 1;
     this.bButton = 0;
+    this.hazardButtonMap = [
+      { index: 9, name: "+" },
+      { index: 8, name: "-" },
+      { index: 3, name: "X" },
+      { index: 2, name: "Y" },
+      { index: 4, name: "L" },
+      { index: 12, name: "D-pad Up" },
+      { index: 14, name: "D-pad Left" },
+      { index: 15, name: "D-pad Right" }
+    ];
     this.deadzone = 0.08;
     this.centerOffset = { x: 0, y: 0 };
   }
@@ -106,7 +116,9 @@ export class GamepadReader {
         rawX: 0,
         rawY: 0,
         bPressed: false,
-        bValue: 0
+        bValue: 0,
+        hazardPressed: false,
+        hazardButtons: []
       };
     }
 
@@ -115,6 +127,9 @@ export class GamepadReader {
     const normalized = applyCircularDeadzone(rawX, rawY, this.deadzone);
     const button = gamepad.buttons[this.bButton];
     const bValue = button ? button.value : 0;
+    const hazardButtons = this.hazardButtonMap
+      .filter((entry) => entry.index !== this.bButton && isButtonPressed(gamepad.buttons[entry.index]))
+      .map((entry) => entry.name);
 
     return {
       connected: true,
@@ -125,9 +140,15 @@ export class GamepadReader {
       rawX,
       rawY,
       bPressed: Boolean(button?.pressed || bValue > 0.5),
-      bValue
+      bValue,
+      hazardPressed: hazardButtons.length > 0,
+      hazardButtons
     };
   }
+}
+
+function isButtonPressed(button) {
+  return Boolean(button?.pressed || button?.value > 0.5);
 }
 
 function applyCircularDeadzone(x, y, deadzone) {

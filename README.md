@@ -2,7 +2,9 @@
 
 BLSS Trainer is an Electron desktop app for practicing and analyzing the left-stick wiggle used for BLSS in Zelda Breath of the Wild.
 
-It is built like a lightweight speedrun telemetry tool: Gamepad API input, live stick trail, heatmap, charts, automatic attempt stops, and an open rating. Around 600 means solid, around 840 means excellent, and exceptional attempts can score above 1040.
+It is built like a lightweight speedrun telemetry tool: Gamepad API input, live stick trail, heatmap, charts, automatic attempt stops, local history, and an open rating.
+
+This project is still in development. The BLSS speed model is a practical training approximation, not an official game-physics simulator.
 
 ## Run
 
@@ -43,8 +45,22 @@ In the `Session` panel:
 
 - `3,2,1 + timer` starts after a countdown and records for the chosen duration.
 - `Hold B` arms the session, starts on the next B press, and stops when B is released.
+- `Train speedcap` starts on B press and challenges you to get close to 104.71 m/s without exceeding it.
 
-During any active attempt, the session stops if B is released or if the left stick stays centered too long, because either state means the BLSS attempt has been lost. The stop reason is shown in the session status and in the session analysis.
+During any active attempt, the session stops if B is released or if the left stick stays centered too long, because either state means the BLSS attempt has been lost. Pressing +, -, X, Y, L, or D-pad up/left/right is tracked as a BLSS-breaking input and lowers the score. The stop reason is shown in the session status and in the session analysis.
+
+## Current Scoring Model
+
+The score now focuses on the essentials:
+
+- Wiggle frequency, with 5 Osc/s treated as the ideal target. Too slow is weaker, and too fast is penalized harder.
+- Simulated BLSS speed toward the 104.71 m/s speedcap. Between 1 and 5 Osc/s, the model uses 60 wiggles to reach cap; above 5 Osc/s it adds extra required wiggles and never allows an estimated best time below 12 seconds.
+- Center crossing quality.
+- B hold quality.
+- Staying on the same steering side of the wiggle.
+- Avoiding inputs that disable BLSS.
+
+If the attempt ends before speedcap, BLSS Trainer estimates the time to cap from the average Osc/s.
 
 ## Architecture
 

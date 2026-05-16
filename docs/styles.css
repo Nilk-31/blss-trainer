@@ -152,6 +152,19 @@ input[type="number"] {
   text-transform: uppercase;
 }
 
+.wip-banner {
+  display: inline-flex;
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  border: 1px solid rgba(224, 184, 91, 0.34);
+  border-radius: 999px;
+  background: rgba(224, 184, 91, 0.08);
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
 .topbar h2 {
   margin-top: 4px;
   font-size: 30px;
@@ -515,7 +528,7 @@ input[type="number"] {
 
 .metric-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   min-width: 0;
 }
@@ -528,6 +541,86 @@ input[type="number"] {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
+}
+
+.speedcap-panel,
+.history-panel {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.speedcap-bar {
+  position: relative;
+  height: 18px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #111517;
+}
+
+.speedcap-bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--cyan), var(--green));
+}
+
+.speedcap-bar b {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  left: 100%;
+  width: 2px;
+  background: var(--amber);
+}
+
+.speedcap-details,
+.history-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.speedcap-details div,
+.history-row {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #121719;
+}
+
+.speedcap-details span,
+.history-row span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.speedcap-details strong,
+.history-row strong {
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.history-empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.small-button {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .chart-panel {
@@ -609,7 +702,9 @@ input[type="number"] {
   }
 
   .metric-strip,
-  .review-grid {
+  .review-grid,
+  .speedcap-details,
+  .history-row {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -644,7 +739,9 @@ input[type="number"] {
   .dashboard-grid,
   .metric-strip,
   .review-grid,
-  .chart-grid {
+  .chart-grid,
+  .speedcap-details,
+  .history-row {
     grid-template-columns: 1fr;
   }
 

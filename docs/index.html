@@ -88,6 +88,7 @@
             <select id="sessionModeSelect">
               <option value="timer" data-i18n="mode.timer">3,2,1 + timer</option>
               <option value="holdB" data-i18n="mode.holdB">Hold B</option>
+              <option value="trainSpeedcap" data-i18n="mode.trainSpeedcap">Train speedcap</option>
             </select>
           </label>
 
@@ -161,6 +162,7 @@
       <main class="workspace">
         <header class="topbar">
           <div>
+            <p class="wip-banner" data-i18n="app.wip">Work in progress</p>
             <p class="eyebrow" data-i18n="header.eyebrow">BLSS analysis / left stick</p>
             <h2 data-i18n="header.title">Open wiggle rating</h2>
           </div>
@@ -199,8 +201,8 @@
                 <div class="meter"><i></i></div>
                 <strong>0</strong>
               </div>
-              <div class="score-row" data-score="rhythm">
-                <span class="help-label" data-i18n="score.rhythm" data-tooltip-key="tooltip.rhythm">Rhythm</span>
+              <div class="score-row" data-score="speedcap">
+                <span class="help-label" data-i18n="score.speedcap" data-tooltip-key="tooltip.speedcap">Speedcap</span>
                 <div class="meter"><i></i></div>
                 <strong>0</strong>
               </div>
@@ -211,6 +213,16 @@
               </div>
               <div class="score-row" data-score="bHold">
                 <span class="help-label" data-i18n="score.bHold" data-tooltip-key="tooltip.bHold">B held</span>
+                <div class="meter"><i></i></div>
+                <strong>0</strong>
+              </div>
+              <div class="score-row" data-score="direction">
+                <span class="help-label" data-i18n="score.direction" data-tooltip-key="tooltip.directionSide">Direction</span>
+                <div class="meter"><i></i></div>
+                <strong>0</strong>
+              </div>
+              <div class="score-row" data-score="inputs">
+                <span class="help-label" data-i18n="score.inputs" data-tooltip-key="tooltip.inputs">Inputs</span>
                 <div class="meter"><i></i></div>
                 <strong>0</strong>
               </div>
@@ -228,12 +240,45 @@
             <strong id="dirValue">0.00</strong>
           </div>
           <div class="metric">
-            <span class="help-label" data-i18n="metric.centerAverage" data-tooltip-key="tooltip.centerAverage">Average center</span>
-            <strong id="centerValue">0.000</strong>
+            <span class="help-label" data-i18n="metric.blssSpeed" data-tooltip-key="tooltip.blssSpeed">BLSS speed</span>
+            <strong id="blssSpeedValue">2.71</strong>
+          </div>
+          <div class="metric">
+            <span class="help-label" data-i18n="metric.speedcapTime" data-tooltip-key="tooltip.speedcapTime">Cap time</span>
+            <strong id="speedcapTimeValue">--</strong>
           </div>
           <div class="metric">
             <span class="help-label" data-i18n="metric.bReleases" data-tooltip-key="tooltip.bReleases">B releases</span>
             <strong id="releaseValue">0</strong>
+          </div>
+        </section>
+
+        <section class="panel speedcap-panel">
+          <div class="panel-title">
+            <span class="help-label" data-i18n="speedcap.title" data-tooltip-key="tooltip.speedcapGauge">Speedcap gauge</span>
+            <span id="speedcapPercent">0%</span>
+          </div>
+          <div class="speedcap-bar">
+            <i id="speedcapFill"></i>
+            <b id="speedcapTarget"></b>
+          </div>
+          <div class="speedcap-details">
+            <div>
+              <span data-i18n="speedcap.current">Current</span>
+              <strong id="speedcapCurrent">2.71 m/s</strong>
+            </div>
+            <div>
+              <span data-i18n="speedcap.eta">ETA</span>
+              <strong id="speedcapEta">--</strong>
+            </div>
+            <div>
+              <span data-i18n="speedcap.requiredWiggles">Required wiggles</span>
+              <strong id="requiredWigglesValue">60</strong>
+            </div>
+            <div>
+              <span data-i18n="speedcap.status">Status</span>
+              <strong id="speedcapStatus">Building</strong>
+            </div>
           </div>
         </section>
 
@@ -242,7 +287,7 @@
             <canvas id="frequencyChart"></canvas>
           </article>
           <article class="panel chart-panel" data-tooltip-key="tooltip.stabilityChart">
-            <canvas id="stabilityChart"></canvas>
+            <canvas id="speedChart"></canvas>
           </article>
           <article class="panel chart-panel" data-tooltip-key="tooltip.centerChart">
             <canvas id="centerChart"></canvas>
@@ -265,12 +310,12 @@
               <strong id="finalDuration">00:00.000</strong>
             </div>
             <div>
-              <span class="help-label" data-i18n="review.rhythmVariance" data-tooltip-key="tooltip.rhythmVariance">Rhythm variance</span>
-              <strong id="rhythmVariance">0.000</strong>
+              <span class="help-label" data-i18n="review.speedcapTime" data-tooltip-key="tooltip.speedcapTime">Speedcap time</span>
+              <strong id="finalSpeedcapTime">--</strong>
             </div>
             <div>
-              <span class="help-label" data-i18n="review.pauses" data-tooltip-key="tooltip.pauses">Pauses</span>
-              <strong id="pauseValue">0</strong>
+              <span class="help-label" data-i18n="review.badInputs" data-tooltip-key="tooltip.inputs">Bad inputs</span>
+              <strong id="badInputsValue">0</strong>
             </div>
             <div>
               <span class="help-label" data-i18n="review.centerContour" data-tooltip-key="tooltip.centerContour">Center contour</span>
@@ -281,6 +326,14 @@
               <strong id="stopReasonValue">Ready</strong>
             </div>
           </div>
+        </section>
+
+        <section class="panel history-panel">
+          <div class="panel-title">
+            <span data-i18n="history.title">Local history</span>
+            <button id="clearHistoryButton" class="ghost-button small-button" type="button" data-i18n="history.clear">Clear</button>
+          </div>
+          <div id="historyList" class="history-list"></div>
         </section>
       </main>
     </div>

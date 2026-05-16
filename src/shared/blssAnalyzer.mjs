@@ -1,36 +1,36 @@
 const DEFAULTS = {
-  minTurnIntervalMs: 34,
-  minTurnAmplitude: 0.16,
-  velocityThreshold: 0.24,
+  minTurnIntervalMs: 42,
+  minTurnAmplitude: 0.14,
+  velocityThreshold: 0.22,
   centerIdealRadius: 0.08,
-  centerWarningRadius: 0.22,
-  maxSamples: 90000
+  centerWarningRadius: 0.24,
+  neutralRadius: 0.18,
+  maxSamples: 90000,
+  minBlssSpeed: 2.71,
+  speedCap: 104.71,
+  optimalOscillationsPerSecond: 5,
+  minimumAccelerationOscillationsPerSecond: 1,
+  baseSpeedcapWiggles: 60,
+  overspeedExtraWigglesPerOsc: 10,
+  slowWiggleDecayThresholdOscillationsPerSecond: 0.5,
+  coastingDecayBaseSpeed: 1.521,
+  coastingDecayTimeConstantSec: 31.874
 };
 
 export const RATING_THRESHOLDS = {
-  exceptional: 1040,
-  excellent: 840,
-  solid: 600,
-  improving: 360
-};
-
-const RATING_LABELS = {
-  waiting: "En attente",
-  unstable: "Instable",
-  improving: "En progression",
-  solid: "Solide",
-  excellent: "Excellent",
-  exceptional: "Exceptionnel"
+  exceptional: 920,
+  excellent: 780,
+  solid: 560,
+  improving: 340
 };
 
 const EMPTY_SUBSCORES = {
   frequency: 0,
-  rhythm: 0,
+  speedcap: 0,
   center: 0,
-  amplitude: 0,
   bHold: 0,
-  fluidity: 0,
-  precision: 0
+  direction: 0,
+  inputs: 0
 };
 
 export class BLSSAnalyzer {
@@ -52,14 +52,14 @@ export class BLSSAnalyzer {
       return;
     }
 
-    const normalized = {
+    this.samples.push({
       time,
       x,
       y,
-      bPressed: Boolean(sample.bPressed)
-    };
-
-    this.samples.push(normalized);
+      bPressed: Boolean(sample.bPressed),
+      hazardPressed: Boolean(sample.hazardPressed),
+      hazardButtons: Array.isArray(sample.hazardButtons) ? sample.hazardButtons.slice(0, 8) : []
+    });
 
     if (this.samples.length > this.options.maxSamples) {
       this.samples.splice(0, this.samples.length - this.options.maxSamples);
@@ -84,19 +84,17 @@ export class BLSSAnalyzer {
     }
 
     const end = this.samples[this.samples.length - 1].time;
-    const start = end - windowMs;
-    return this.samples.filter((sample) => sample.time >= start);
+    return this.samples.filter((sample) => sample.time >= end - windowMs);
   }
 
   getLiveStats(windowMs = 2600) {
     if (this.samples.length === 0) {
-      return createEmptyStats();
+      return createEmptyStats(this.options);
     }
 
     const end = this.samples[this.samples.length - 1].time;
-    const start = end - windowMs;
     return analyzeSamples(
-      this.samples.filter((sample) => sample.time >= start),
+      this.samples.filter((sample) => sample.time >= end - windowMs),
       this.options
     );
   }
@@ -128,14 +126,14 @@ export function analyzeSamples(samples, options = {}) {
     .sort((a, b) => a.time - b.time);
 
   if (clean.length < 2) {
-    return createEmptyStats();
+    return createEmptyStats(opts);
   }
 
   const durationMs = Math.max(0, clean[clean.length - 1].time - clean[0].time);
   const durationSec = durationMs / 1000;
 
   if (durationSec <= 0) {
-    return createEmptyStats();
+    return createEmptyStats(opts);
   }
 
   const axis = estimateDominantAxis(clean);
@@ -150,110 +148,99 @@ export function analyzeSamples(samples, options = {}) {
   }
 
   const smoothedProjection = movingAverage(projected, 5);
-  const speeds = computeSpeeds(clean);
+  const speeds = computeStickSpeeds(clean);
   const turns = detectTurns(clean, smoothedProjection, perpendicular, opts);
   const crossings = detectCenterCrossings(clean, projected, perpendicular);
-  const intervals = diffTimes(turns);
-  const pauses = detectPauses(clean, speeds);
-  const bHold = analyzeBHold(clean);
-  const amplitude = analyzeAmplitude(turns, projected, radial);
-  const rhythm = analyzeRhythm(intervals, pauses, durationSec);
-  const center = analyzeCenter(crossings, turns, opts);
-  const fluidity = analyzeFluidity(speeds, perpendicular, projected, pauses, durationSec);
-
   const directionChangesPerSecond = turns.length / durationSec;
   const oscillationsPerSecond = directionChangesPerSecond / 2;
-  const currentSpeed = speeds.length > 0 ? speeds[speeds.length - 1] : 0;
-  const averageSpeed = average(speeds);
-  const maxSpeed = maxValue(speeds);
-  const frequencyScore = frequencySubscore(oscillationsPerSecond);
-  const precisionScore = clamp(
-    center.score * 0.36 +
-      rhythm.score * 0.24 +
-      amplitude.score * 0.16 +
-      fluidity.score * 0.14 +
-      bHold.score * 0.1,
-    0,
-    1.18
-  );
-  const finalScore = computeOpenRating({
-    oscillationsPerSecond,
+  const bHold = analyzeBHold(clean);
+  const center = analyzeCenter(crossings, turns, opts);
+  const direction = analyzeDirectionSide(perpendicular, radial);
+  const inputs = analyzeForbiddenInputs(clean);
+  const speedcap = simulateSpeedcap(clean, turns, radial, opts);
+  const frequencyScore = frequencySubscore(oscillationsPerSecond, opts);
+  const score = computeRating({
     frequencyScore,
-    rhythmScore: rhythm.score,
+    speedcapScore: speedcap.score,
     centerScore: center.score,
-    amplitudeScore: amplitude.score,
     bHoldScore: bHold.score,
-    fluidityScore: fluidity.score,
-    precisionScore,
-    durationSec
+    directionScore: direction.score,
+    inputScore: inputs.score
   });
 
   const subScores = {
     frequency: frequencyScore * 100,
-    rhythm: rhythm.score * 100,
+    speedcap: speedcap.score * 100,
     center: center.score * 100,
-    amplitude: amplitude.score * 100,
     bHold: bHold.score * 100,
-    fluidity: fluidity.score * 100,
-    precision: precisionScore * 100
+    direction: direction.score * 100,
+    inputs: inputs.score * 100
   };
 
   return {
     ready: clean.length >= 6,
     sampleCount: clean.length,
     durationMs,
-    score: finalScore,
-    ratingLabel: ratingLabel(finalScore),
+    score,
+    ratingTier: getRatingTier(score),
     axis,
     frequency: {
       score: frequencyScore,
       oscillationsPerSecond,
       directionChangesPerSecond,
-      currentSpeed,
-      averageSpeed,
-      maxSpeed
+      optimalOscillationsPerSecond: opts.optimalOscillationsPerSecond,
+      currentStickSpeed: speeds.at(-1) ?? 0,
+      averageStickSpeed: average(speeds),
+      maxStickSpeed: maxValue(speeds)
     },
-    rhythm,
+    speedcap,
     center,
-    amplitude,
     bHold,
-    fluidity,
+    direction,
+    inputs,
     subScores,
     chartValues: {
-      speed: currentSpeed,
       frequency: oscillationsPerSecond,
-      stability: rhythm.score * 100,
-      center: center.score * 100,
-      precision: precisionScore * 100
+      speed: speedcap.currentSpeed,
+      blssSpeed: speedcap.currentSpeed,
+      speedcap: speedcap.progress * 100,
+      center: center.score * 100
     }
   };
 }
 
-function createEmptyStats() {
+function createEmptyStats(options = DEFAULTS) {
   return {
     ready: false,
     sampleCount: 0,
     durationMs: 0,
     score: 0,
-    ratingLabel: "En attente",
+    ratingTier: "waiting",
     axis: { x: 1, y: 0, angle: 0 },
     frequency: {
       score: 0,
       oscillationsPerSecond: 0,
       directionChangesPerSecond: 0,
-      currentSpeed: 0,
-      averageSpeed: 0,
-      maxSpeed: 0
+      optimalOscillationsPerSecond: options.optimalOscillationsPerSecond,
+      currentStickSpeed: 0,
+      averageStickSpeed: 0,
+      maxStickSpeed: 0
     },
-    rhythm: {
+    speedcap: {
       score: 0,
-      intervalVariance: 0,
-      intervalCv: 0,
-      meanTurnIntervalMs: 0,
-      pauseCount: 0,
-      totalPauseMs: 0,
-      maxPauseMs: 0,
-      hesitationCount: 0
+      currentSpeed: options.minBlssSpeed,
+      progress: 0,
+      rawProgress: 0,
+      exceeded: false,
+      overspeedAmount: 0,
+      reached: false,
+      reachedAtMs: 0,
+      timeToCapSec: 0,
+      estimatedTimeToCapSec: 0,
+      averageAccelerationOscillationsPerSecond: 0,
+      requiredWiggles: options.baseSpeedcapWiggles,
+      wiggleProgress: 0,
+      pauseSlowdownMs: 0
     },
     center: {
       score: 0,
@@ -262,13 +249,6 @@ function createEmptyStats() {
       medianDistance: 0,
       withinIdealRatio: 0,
       contourPenalty: 1
-    },
-    amplitude: {
-      score: 0,
-      meanExtreme: 0,
-      peak: 0,
-      consistency: 0,
-      edgePressure: 0
     },
     bHold: {
       score: 0,
@@ -279,20 +259,326 @@ function createEmptyStats() {
       maxReleaseMs: 0,
       isHeldNow: false
     },
-    fluidity: {
-      score: 0,
-      speedCv: 0,
-      parasiteRatio: 0,
-      pauseDensity: 0
+    direction: {
+      score: 1,
+      dominantSide: 0,
+      dominantSideRatio: 1,
+      sideFlipCount: 0,
+      wrongSideRatio: 0
+    },
+    inputs: {
+      score: 1,
+      forbiddenPressCount: 0,
+      forbiddenSampleRatio: 0,
+      buttons: []
     },
     subScores: { ...EMPTY_SUBSCORES },
     chartValues: {
-      speed: 0,
       frequency: 0,
-      stability: 0,
-      center: 0,
-      precision: 0
+      speed: options.minBlssSpeed,
+      blssSpeed: options.minBlssSpeed,
+      speedcap: 0,
+      center: 0
     }
+  };
+}
+
+function simulateSpeedcap(samples, turns, radial, opts) {
+  let currentSpeed = opts.minBlssSpeed;
+  let reachedAtMs = 0;
+  let wiggleProgress = 0;
+  let pauseSlowdownMs = 0;
+  let lastTurnTime = samples[0].time;
+  let lastTurnIndex = 0;
+  let recentTurns = [];
+  const slowWigglePauseMs = slowWigglePauseMsForThreshold(opts);
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const sample = samples[index];
+    const dtMs = Math.max(0, sample.time - samples[index - 1].time);
+
+    while (lastTurnIndex < turns.length && turns[lastTurnIndex].time <= sample.time) {
+      const turn = turns[lastTurnIndex];
+      recentTurns = recentTurns.filter((time) => turn.time - time <= 1400);
+      recentTurns.push(turn.time);
+
+      const recentOsc = recentTurns.length > 1 ? ((recentTurns.length - 1) / ((recentTurns.at(-1) - recentTurns[0]) / 1000)) / 2 : 0;
+
+      if (recentOsc >= opts.minimumAccelerationOscillationsPerSecond) {
+        const requiredWiggles = requiredWigglesForFrequency(recentOsc, opts);
+        const gainPerHalfWiggle = (opts.speedCap - opts.minBlssSpeed) / requiredWiggles / 2;
+        currentSpeed = Math.min(opts.speedCap * 1.22, currentSpeed + gainPerHalfWiggle);
+        wiggleProgress += 0.5;
+      }
+
+      lastTurnTime = turn.time;
+      lastTurnIndex += 1;
+    }
+
+    const noWiggleMs = sample.time - lastTurnTime;
+
+    if (sample.bPressed && radial[index] > opts.neutralRadius && wiggleProgress > 0 && noWiggleMs >= slowWigglePauseMs) {
+      pauseSlowdownMs += dtMs;
+      currentSpeed = decayBlssSpeed(currentSpeed, dtMs / 1000, opts);
+    }
+
+    if (!reachedAtMs && currentSpeed >= opts.speedCap) {
+      reachedAtMs = sample.time - samples[0].time;
+    }
+  }
+
+  const durationSec = (samples.at(-1).time - samples[0].time) / 1000;
+  const averageOsc = turns.length / Math.max(durationSec, 0.001) / 2;
+  const requiredWiggles = requiredWigglesForFrequency(Math.max(averageOsc, opts.minimumAccelerationOscillationsPerSecond), opts);
+  const estimatedTimeToCapSec =
+    averageOsc >= opts.minimumAccelerationOscillationsPerSecond
+      ? Math.max(12, requiredWiggles / averageOsc)
+      : Infinity;
+  const reached = reachedAtMs > 0;
+  const timeToCapSec = reached ? reachedAtMs / 1000 : 0;
+  const timeBasis = reached ? timeToCapSec : estimatedTimeToCapSec;
+  const rawProgress = (currentSpeed - opts.minBlssSpeed) / (opts.speedCap - opts.minBlssSpeed);
+  const progress = clamp(rawProgress, 0, 1);
+  const timeScore = Number.isFinite(timeBasis) ? clamp(Math.pow(12 / Math.max(timeBasis, 12), 1.35), 0, 1) : 0;
+  const progressScore = reached ? 1 : clamp(progress, 0, 1);
+  const pausePenalty = clamp(1 - pauseSlowdownMs / 8500, 0.45, 1);
+  const score = clamp(timeScore * (reached ? 1 : progressScore) * pausePenalty, 0, 1);
+
+  return {
+    score,
+    currentSpeed,
+    progress,
+    rawProgress,
+    exceeded: currentSpeed > opts.speedCap,
+    overspeedAmount: Math.max(0, currentSpeed - opts.speedCap),
+    reached,
+    reachedAtMs,
+    timeToCapSec,
+    estimatedTimeToCapSec: Number.isFinite(estimatedTimeToCapSec) ? estimatedTimeToCapSec : 0,
+    averageAccelerationOscillationsPerSecond: averageOsc,
+    requiredWiggles,
+    wiggleProgress,
+    pauseSlowdownMs
+  };
+}
+
+export function requiredWigglesForFrequency(oscillationsPerSecond, options = {}) {
+  const opts = { ...DEFAULTS, ...options };
+  const osc = Math.max(0, Number(oscillationsPerSecond) || 0);
+
+  if (osc <= opts.optimalOscillationsPerSecond) {
+    return opts.baseSpeedcapWiggles;
+  }
+
+  const overspeedRequired =
+    opts.baseSpeedcapWiggles + (osc - opts.optimalOscillationsPerSecond) * opts.overspeedExtraWigglesPerOsc;
+
+  return Math.max(overspeedRequired, 12 * osc);
+}
+
+function slowWigglePauseMsForThreshold(opts) {
+  const threshold = Math.max(0, opts.slowWiggleDecayThresholdOscillationsPerSecond);
+  return threshold > 0 ? 1000 / (threshold * 2) : Infinity;
+}
+
+function decayBlssSpeed(currentSpeed, elapsedSec, opts) {
+  const tau = Math.max(0.001, opts.coastingDecayTimeConstantSec);
+  const decay = Math.exp(-Math.max(0, elapsedSec) / tau);
+  return opts.coastingDecayBaseSpeed + (currentSpeed - opts.coastingDecayBaseSpeed) * decay;
+}
+
+function frequencySubscore(oscillationsPerSecond, opts) {
+  const osc = Math.max(0, oscillationsPerSecond);
+
+  if (osc < opts.minimumAccelerationOscillationsPerSecond) {
+    return clamp(osc / opts.minimumAccelerationOscillationsPerSecond, 0, 1) * 0.28;
+  }
+
+  if (osc <= opts.optimalOscillationsPerSecond) {
+    return clamp(0.42 + 0.58 * smoothStep(1, opts.optimalOscillationsPerSecond, osc), 0, 1);
+  }
+
+  const overspeed = osc - opts.optimalOscillationsPerSecond;
+  return clamp(Math.exp(-Math.pow(overspeed / 1.15, 2)), 0, 1);
+}
+
+function computeRating(parts) {
+  const quality =
+    parts.frequencyScore * 0.32 +
+    parts.speedcapScore * 0.34 +
+    parts.centerScore * 0.15 +
+    parts.bHoldScore * 0.1 +
+    parts.directionScore * 0.06 +
+    parts.inputScore * 0.03;
+
+  return Math.max(0, quality * 1000);
+}
+
+function analyzeBHold(samples) {
+  let releasedMs = 0;
+  let releaseCount = 0;
+  let microReleaseCount = 0;
+  let maxReleaseMs = 0;
+  let activeReleaseStart = null;
+  let activeReleaseDuration = 0;
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1];
+    const current = samples[index];
+    const dt = Math.max(0, current.time - previous.time);
+
+    if (!previous.bPressed) {
+      releasedMs += dt;
+      activeReleaseDuration += dt;
+    }
+
+    if (previous.bPressed && !current.bPressed) {
+      releaseCount += 1;
+      activeReleaseStart = current.time;
+      activeReleaseDuration = 0;
+    }
+
+    if (!previous.bPressed && current.bPressed && activeReleaseStart !== null) {
+      if (activeReleaseDuration <= 80) {
+        microReleaseCount += 1;
+      }
+
+      maxReleaseMs = Math.max(maxReleaseMs, activeReleaseDuration);
+      activeReleaseStart = null;
+      activeReleaseDuration = 0;
+    }
+  }
+
+  if (activeReleaseStart !== null) {
+    if (activeReleaseDuration <= 80) {
+      microReleaseCount += 1;
+    }
+
+    maxReleaseMs = Math.max(maxReleaseMs, activeReleaseDuration);
+  }
+
+  const durationMs = Math.max(samples.at(-1).time - samples[0].time, 1);
+  const releasedRatio = clamp(releasedMs / durationMs, 0, 1);
+  const heldRatio = 1 - releasedRatio;
+  const score = clamp(1 - releasedRatio * 6 - microReleaseCount * 0.09 - Math.max(0, maxReleaseMs - 90) / 360, 0, 1);
+
+  return {
+    score,
+    heldRatio,
+    releaseCount,
+    microReleaseCount,
+    releaseDurationMs: releasedMs,
+    maxReleaseMs,
+    isHeldNow: Boolean(samples.at(-1).bPressed)
+  };
+}
+
+function analyzeCenter(crossings, turns, opts) {
+  if (crossings.length === 0) {
+    return {
+      score: 0,
+      crossings: 0,
+      averageDistance: 1,
+      medianDistance: 1,
+      withinIdealRatio: 0,
+      contourPenalty: 1
+    };
+  }
+
+  const distances = crossings.map((crossing) => crossing.distance);
+  const averageDistance = average(distances);
+  const medianDistance = percentile(distances, 0.5);
+  const withinIdealRatio = distances.filter((distance) => distance <= opts.centerIdealRadius).length / distances.length;
+  const distanceScore = clamp(1 - Math.pow(averageDistance / opts.centerWarningRadius, 1.35), 0, 1);
+  const consistencyScore = clamp(1 - standardDeviation(distances) / 0.18, 0, 1);
+  const expectedCrossings = Math.max(1, turns.length - 1);
+  const coverageScore = clamp(crossings.length / expectedCrossings, 0, 1);
+  const contourPenalty = clamp(averageDistance / opts.centerWarningRadius, 0, 1);
+  const score = clamp(distanceScore * 0.72 + consistencyScore * 0.18 + coverageScore * 0.1, 0, 1);
+
+  return {
+    score,
+    crossings: crossings.length,
+    averageDistance,
+    medianDistance,
+    withinIdealRatio,
+    contourPenalty
+  };
+}
+
+function analyzeDirectionSide(perpendicular, radial) {
+  const sideSamples = [];
+
+  for (let index = 0; index < perpendicular.length; index += 1) {
+    if (radial[index] > 0.28 && Math.abs(perpendicular[index]) > 0.1) {
+      sideSamples.push(Math.sign(perpendicular[index]));
+    }
+  }
+
+  if (sideSamples.length < 8) {
+    return {
+      score: 1,
+      dominantSide: 0,
+      dominantSideRatio: 1,
+      sideFlipCount: 0,
+      wrongSideRatio: 0
+    };
+  }
+
+  const positiveCount = sideSamples.filter((side) => side > 0).length;
+  const negativeCount = sideSamples.length - positiveCount;
+  const dominantSide = positiveCount >= negativeCount ? 1 : -1;
+  const dominantCount = Math.max(positiveCount, negativeCount);
+  const dominantSideRatio = dominantCount / sideSamples.length;
+  const wrongSideRatio = 1 - dominantSideRatio;
+  let sideFlipCount = 0;
+  let lastSide = sideSamples[0];
+
+  for (const side of sideSamples.slice(1)) {
+    if (side !== lastSide) {
+      sideFlipCount += 1;
+      lastSide = side;
+    }
+  }
+
+  const score = clamp(1 - wrongSideRatio * 2.7 - sideFlipCount * 0.075, 0, 1);
+
+  return {
+    score,
+    dominantSide,
+    dominantSideRatio,
+    sideFlipCount,
+    wrongSideRatio
+  };
+}
+
+function analyzeForbiddenInputs(samples) {
+  let forbiddenPressCount = 0;
+  let forbiddenSampleCount = 0;
+  let wasPressed = false;
+  const buttons = new Set();
+
+  for (const sample of samples) {
+    if (sample.hazardPressed) {
+      forbiddenSampleCount += 1;
+      sample.hazardButtons.forEach((button) => buttons.add(button));
+
+      if (!wasPressed) {
+        forbiddenPressCount += 1;
+      }
+    }
+
+    wasPressed = Boolean(sample.hazardPressed);
+  }
+
+  const forbiddenSampleRatio = samples.length > 0 ? forbiddenSampleCount / samples.length : 0;
+  const score = clamp(1 - forbiddenPressCount * 0.32 - forbiddenSampleRatio * 3.2, 0, 1);
+
+  return {
+    score,
+    forbiddenPressCount,
+    forbiddenSampleRatio,
+    buttons: Array.from(buttons)
   };
 }
 
@@ -323,7 +609,7 @@ function estimateDominantAxis(samples) {
   };
 }
 
-function computeSpeeds(samples) {
+function computeStickSpeeds(samples) {
   const speeds = [];
 
   for (let index = 1; index < samples.length; index += 1) {
@@ -412,258 +698,6 @@ function detectCenterCrossings(samples, projection, perpendicular) {
   return crossings;
 }
 
-function detectPauses(samples, speeds) {
-  const pauses = [];
-  let pauseStart = null;
-  let totalMs = 0;
-  let maxMs = 0;
-
-  for (let index = 1; index < samples.length; index += 1) {
-    const speed = speeds[index - 1] ?? 0;
-    const isPause = speed < 0.22;
-
-    if (isPause && pauseStart === null) {
-      pauseStart = samples[index - 1].time;
-    }
-
-    if ((!isPause || index === samples.length - 1) && pauseStart !== null) {
-      const end = isPause ? samples[index].time : samples[index - 1].time;
-      const duration = end - pauseStart;
-
-      if (duration >= 80) {
-        pauses.push(duration);
-        totalMs += duration;
-        maxMs = Math.max(maxMs, duration);
-      }
-
-      pauseStart = null;
-    }
-  }
-
-  return {
-    count: pauses.length,
-    durations: pauses,
-    totalMs,
-    maxMs
-  };
-}
-
-function analyzeBHold(samples) {
-  let releasedMs = 0;
-  let releaseCount = 0;
-  let microReleaseCount = 0;
-  let maxReleaseMs = 0;
-  let activeReleaseStart = null;
-  let activeReleaseDuration = 0;
-
-  for (let index = 1; index < samples.length; index += 1) {
-    const previous = samples[index - 1];
-    const current = samples[index];
-    const dt = Math.max(0, current.time - previous.time);
-
-    if (!previous.bPressed) {
-      releasedMs += dt;
-      activeReleaseDuration += dt;
-    }
-
-    if (previous.bPressed && !current.bPressed) {
-      releaseCount += 1;
-      activeReleaseStart = current.time;
-      activeReleaseDuration = 0;
-    }
-
-    if (!previous.bPressed && current.bPressed && activeReleaseStart !== null) {
-      if (activeReleaseDuration <= 80) {
-        microReleaseCount += 1;
-      }
-
-      maxReleaseMs = Math.max(maxReleaseMs, activeReleaseDuration);
-      activeReleaseStart = null;
-      activeReleaseDuration = 0;
-    }
-  }
-
-  if (activeReleaseStart !== null) {
-    if (activeReleaseDuration <= 80) {
-      microReleaseCount += 1;
-    }
-
-    maxReleaseMs = Math.max(maxReleaseMs, activeReleaseDuration);
-  }
-
-  const durationMs = Math.max(samples[samples.length - 1].time - samples[0].time, 1);
-  const releasedRatio = clamp(releasedMs / durationMs, 0, 1);
-  const heldRatio = 1 - releasedRatio;
-  const score = clamp(
-    1 - releasedRatio * 5.6 - microReleaseCount * 0.075 - Math.max(0, maxReleaseMs - 90) / 420,
-    0,
-    1
-  );
-
-  return {
-    score,
-    heldRatio,
-    releaseCount,
-    microReleaseCount,
-    releaseDurationMs: releasedMs,
-    maxReleaseMs,
-    isHeldNow: Boolean(samples[samples.length - 1].bPressed)
-  };
-}
-
-function analyzeAmplitude(turns, projected, radial) {
-  const absProjected = projected.map((value) => Math.abs(value));
-  const positiveExtremes = projected.filter((value) => value > 0.05).map((value) => Math.abs(value));
-  const negativeExtremes = projected.filter((value) => value < -0.05).map((value) => Math.abs(value));
-  const turnExtremes = turns.map((turn) => Math.abs(turn.p)).filter(Number.isFinite);
-  const positiveExtreme = percentile(positiveExtremes, 0.9);
-  const negativeExtreme = percentile(negativeExtremes, 0.9);
-  const robustExtreme = percentile(absProjected, 0.9);
-  const turnMedian = percentile(turnExtremes, 0.5);
-  const hasBothSides = positiveExtreme > 0.05 && negativeExtreme > 0.05;
-  const sideMeanExtreme = hasBothSides ? (positiveExtreme + negativeExtreme) / 2 : robustExtreme * 0.72;
-  const sideBalance = hasBothSides
-    ? clamp(Math.min(positiveExtreme, negativeExtreme) / Math.max(positiveExtreme, negativeExtreme), 0.45, 1)
-    : 0.55;
-  const meanExtreme = Math.max(sideMeanExtreme, turnMedian * 0.9, robustExtreme * 0.82);
-  const peak = maxValue(absProjected);
-  const radialPeak = maxValue(radial);
-  const edgePressure = radial.length === 0 ? 0 : radial.filter((value) => value > 0.985).length / radial.length;
-  const cv = coefficientOfVariation(turnExtremes);
-  const rangeScore = smoothStep(0.34, 0.72, meanExtreme);
-  const peakScore = smoothStep(0.45, 0.86, robustExtreme);
-  const excessPenalty = 1 - clamp(edgePressure * 1.4 + smoothStep(1.01, 1.08, radialPeak) * 0.25, 0, 0.55);
-  const consistency = turnExtremes.length >= 4 ? clamp(1 - cv / 0.42, 0.62, 1) : 0.88;
-  const score = clamp((rangeScore * 0.78 + peakScore * 0.22) * sideBalance * excessPenalty * consistency, 0, 1);
-
-  return {
-    score,
-    meanExtreme,
-    peak,
-    consistency,
-    edgePressure
-  };
-}
-
-function analyzeRhythm(intervals, pauses, durationSec) {
-  const usableIntervals = intervals.filter((interval) => interval > 0.025 && interval < 0.6);
-  const meanInterval = average(usableIntervals);
-  const varianceValue = variance(usableIntervals);
-  const cv = coefficientOfVariation(usableIntervals);
-  const hesitationCount = usableIntervals.filter((interval) => meanInterval > 0 && interval > meanInterval * 1.75).length;
-  const cadenceStability = usableIntervals.length < 3 ? 0.38 : 1 / (1 + Math.pow(cv / 0.22, 2));
-  const pausePressure = clamp(pauses.totalMs / Math.max(durationSec * 1000, 1), 0, 1);
-  const pauseFactor = clamp(1 - pausePressure * 3.2 - pauses.count * 0.045, 0, 1);
-  const hesitationFactor = clamp(1 - hesitationCount * 0.075, 0.25, 1);
-  const score = clamp(cadenceStability * pauseFactor * hesitationFactor, 0, 1);
-
-  return {
-    score,
-    intervalVariance: varianceValue,
-    intervalCv: cv,
-    meanTurnIntervalMs: meanInterval * 1000,
-    pauseCount: pauses.count,
-    totalPauseMs: pauses.totalMs,
-    maxPauseMs: pauses.maxMs,
-    hesitationCount
-  };
-}
-
-function analyzeCenter(crossings, turns, opts) {
-  if (crossings.length === 0) {
-    return {
-      score: 0,
-      crossings: 0,
-      averageDistance: 1,
-      medianDistance: 1,
-      withinIdealRatio: 0,
-      contourPenalty: 1
-    };
-  }
-
-  const distances = crossings.map((crossing) => crossing.distance);
-  const averageDistance = average(distances);
-  const medianDistance = percentile(distances, 0.5);
-  const withinIdealRatio = distances.filter((distance) => distance <= opts.centerIdealRadius).length / distances.length;
-  const distanceScore = clamp(1 - Math.pow(averageDistance / opts.centerWarningRadius, 1.35), 0, 1);
-  const consistencyScore = clamp(1 - standardDeviation(distances) / 0.16, 0, 1);
-  const expectedCrossings = Math.max(1, turns.length - 1);
-  const coverageScore = clamp(crossings.length / expectedCrossings, 0, 1);
-  const contourPenalty = clamp(averageDistance / opts.centerWarningRadius, 0, 1);
-  const score = clamp(
-    distanceScore * 0.62 +
-      consistencyScore * 0.18 +
-      withinIdealRatio * 0.14 +
-      coverageScore * 0.06,
-    0,
-    1
-  );
-
-  return {
-    score,
-    crossings: crossings.length,
-    averageDistance,
-    medianDistance,
-    withinIdealRatio,
-    contourPenalty
-  };
-}
-
-function analyzeFluidity(speeds, perpendicular, projected, pauses, durationSec) {
-  const movingSpeeds = speeds.filter((speed) => Number.isFinite(speed) && speed > 0.05);
-  const speedCv = coefficientOfVariation(movingSpeeds);
-  const speedContinuity = clamp(1 - Math.max(0, speedCv - 0.52) / 1.35, 0, 1);
-  const parasiteRatio = rootMeanSquare(perpendicular) / Math.max(rootMeanSquare(projected), 0.001);
-  const pathCoherence = clamp(1 - Math.pow(parasiteRatio / 0.72, 1.2), 0, 1);
-  const pauseDensity = clamp(pauses.totalMs / Math.max(durationSec * 1000, 1), 0, 1);
-  const pauseScore = clamp(1 - pauseDensity * 3.1 - pauses.count * 0.04, 0, 1);
-  const score = clamp(speedContinuity * 0.34 + pathCoherence * 0.38 + pauseScore * 0.28, 0, 1);
-
-  return {
-    score,
-    speedCv,
-    parasiteRatio,
-    pauseDensity
-  };
-}
-
-function computeOpenRating(parts) {
-  if (parts.durationSec <= 0) {
-    return 0;
-  }
-
-  const cadenceNormalized = clamp(parts.frequencyScore, 0, 1.16);
-  const quality =
-    cadenceNormalized * 0.15 +
-    parts.rhythmScore * 0.2 +
-    parts.centerScore * 0.24 +
-    parts.amplitudeScore * 0.12 +
-    parts.fluidityScore * 0.12 +
-    parts.bHoldScore * 0.17;
-  const frequencyMultiplier = Math.pow(Math.max(parts.oscillationsPerSecond, 0.15) / 7.6, 0.28);
-  const bGate = Math.pow(clamp(parts.bHoldScore, 0, 1), 1.32);
-  const durationConfidence = clamp(parts.durationSec / 1.15, 0.18, 1);
-  const base = 1080 * Math.pow(clamp(quality, 0, 1.12), 1.18) * frequencyMultiplier * bGate;
-  const eliteCadenceBonus =
-    Math.max(0, parts.oscillationsPerSecond - 7.6) *
-    48 *
-    Math.pow(clamp(parts.precisionScore, 0, 1.12), 2.2) *
-    bGate;
-  const elitePrecisionBonus = Math.max(0, quality - 0.93) * 760 * bGate;
-
-  return Math.max(0, (base + eliteCadenceBonus + elitePrecisionBonus) * durationConfidence);
-}
-
-function frequencySubscore(oscillationsPerSecond) {
-  const normal = smoothStep(1.8, 7.6, oscillationsPerSecond);
-  const elite = Math.log1p(Math.max(0, oscillationsPerSecond - 7.6)) * 0.085;
-  return normal + elite;
-}
-
-function ratingLabel(score) {
-  return RATING_LABELS[getRatingTier(score)];
-}
-
 export function getRatingTier(score) {
   if (score >= RATING_THRESHOLDS.exceptional) {
     return "exceptional";
@@ -727,39 +761,13 @@ function average(values) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function variance(values) {
+function standardDeviation(values) {
   if (!values || values.length < 2) {
     return 0;
   }
 
   const avg = average(values);
-  return average(values.map((value) => Math.pow(value - avg, 2)));
-}
-
-function standardDeviation(values) {
-  return Math.sqrt(variance(values));
-}
-
-function coefficientOfVariation(values) {
-  if (!values || values.length < 2) {
-    return 0;
-  }
-
-  const avg = Math.abs(average(values));
-
-  if (avg < 0.000001) {
-    return 0;
-  }
-
-  return standardDeviation(values) / avg;
-}
-
-function rootMeanSquare(values) {
-  if (!values || values.length === 0) {
-    return 0;
-  }
-
-  return Math.sqrt(average(values.map((value) => value * value)));
+  return Math.sqrt(average(values.map((value) => Math.pow(value - avg, 2))));
 }
 
 function percentile(values, ratio) {

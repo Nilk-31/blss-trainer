@@ -14,6 +14,8 @@ const B_RELEASE_STOP_MS = 90;
 const STICK_CENTER_STOP_MS = 320;
 const STICK_CENTER_STOP_RADIUS = 0.16;
 const RUN_START_GRACE_MS = 550;
+const HISTORY_STORAGE_KEY = "blss-run-history";
+const HISTORY_LIMIT = 30;
 
 const analyzer = new BLSSAnalyzer();
 const gamepadReader = new GamepadReader();
@@ -52,22 +54,31 @@ const dom = {
   heatmapCanvas: document.querySelector("#heatmapCanvas"),
   oscValue: document.querySelector("#oscValue"),
   dirValue: document.querySelector("#dirValue"),
-  centerValue: document.querySelector("#centerValue"),
+  blssSpeedValue: document.querySelector("#blssSpeedValue"),
+  speedcapTimeValue: document.querySelector("#speedcapTimeValue"),
   releaseValue: document.querySelector("#releaseValue"),
+  speedcapPercent: document.querySelector("#speedcapPercent"),
+  speedcapFill: document.querySelector("#speedcapFill"),
+  speedcapCurrent: document.querySelector("#speedcapCurrent"),
+  speedcapEta: document.querySelector("#speedcapEta"),
+  requiredWigglesValue: document.querySelector("#requiredWigglesValue"),
+  speedcapStatus: document.querySelector("#speedcapStatus"),
   sampleCount: document.querySelector("#sampleCount"),
   finalScore: document.querySelector("#finalScore"),
   finalDuration: document.querySelector("#finalDuration"),
-  rhythmVariance: document.querySelector("#rhythmVariance"),
-  pauseValue: document.querySelector("#pauseValue"),
+  finalSpeedcapTime: document.querySelector("#finalSpeedcapTime"),
+  badInputsValue: document.querySelector("#badInputsValue"),
   contourValue: document.querySelector("#contourValue"),
   stopReasonValue: document.querySelector("#stopReasonValue"),
   languageSelect: document.querySelector("#languageSelect"),
   tutorialButton: document.querySelector("#tutorialButton"),
   tutorialOverlay: document.querySelector("#tutorialOverlay"),
   closeTutorialButton: document.querySelector("#closeTutorialButton"),
+  clearHistoryButton: document.querySelector("#clearHistoryButton"),
+  historyList: document.querySelector("#historyList"),
   charts: {
     frequency: document.querySelector("#frequencyChart"),
-    stability: document.querySelector("#stabilityChart"),
+    speed: document.querySelector("#speedChart"),
     center: document.querySelector("#centerChart")
   }
 };
@@ -95,7 +106,7 @@ const session = {
   liveTrail: [],
   charts: {
     frequency: [],
-    stability: [],
+    speed: [],
     center: []
   }
 };
@@ -154,6 +165,7 @@ function initControls() {
   });
   dom.tutorialButton.addEventListener("click", showTutorial);
   dom.closeTutorialButton.addEventListener("click", closeTutorial);
+  dom.clearHistoryButton.addEventListener("click", clearHistory);
   dom.tutorialOverlay.addEventListener("click", (event) => {
     if (event.target === dom.tutorialOverlay) {
       closeTutorial();
@@ -170,6 +182,7 @@ function initControls() {
   applyLanguage();
   updateSessionModeUi();
   refreshGamepadList();
+  renderHistory();
   maybeShowFirstRunTutorial();
 }
 
@@ -223,12 +236,19 @@ function applyLanguage() {
   refreshLocalizedSessionText();
   updateUi(analyzer.getSessionStats(), gamepadReader.read(), performance.now());
   updateReview(analyzer.getSessionStats());
+  renderHistory();
 }
 
 function refreshLocalizedSessionText() {
   if (session.active) {
     dom.sessionBadge.textContent = t("status.running");
-    setTrainingStatusKey(session.mode === "timer" ? "status.timerStarted" : "status.bHeld");
+    setTrainingStatusKey(
+      session.mode === "timer"
+        ? "status.timerStarted"
+        : session.mode === "trainSpeedcap"
+          ? "status.speedcapTraining"
+          : "status.bHeld"
+    );
     return;
   }
 
@@ -239,7 +259,7 @@ function refreshLocalizedSessionText() {
 
   if (session.waitingForB) {
     dom.sessionBadge.textContent = t("status.armed");
-    setTrainingStatusKey("status.waitB");
+    setTrainingStatusKey(session.mode === "trainSpeedcap" ? "status.waitSpeedcapTrain" : "status.waitB");
     return;
   }
 
@@ -528,7 +548,7 @@ function startSession() {
   session.lastBPressed = gamepadReader.read().bPressed;
   setSessionControlsLocked(true);
 
-  if (mode === "holdB") {
+  if (mode === "holdB" || mode === "trainSpeedcap") {
     session.waitingForB = true;
     session.lastStopReasonKey = "status.waitB";
     dom.sessionBadge.textContent = t("status.armed");
@@ -536,7 +556,7 @@ function startSession() {
     dom.startButton.disabled = true;
     dom.stopButton.disabled = false;
     setSessionCue("B", "armed");
-    setTrainingStatusKey("status.waitB");
+    setTrainingStatusKey(mode === "trainSpeedcap" ? "status.waitSpeedcapTrain" : "status.waitB");
     updateReview(analyzer.getSessionStats());
     return;
   }
@@ -570,7 +590,13 @@ function startActiveRun(now) {
   dom.startButton.disabled = true;
   dom.stopButton.disabled = false;
   setSessionCue("GO", "live");
-  setTrainingStatusKey(session.mode === "timer" ? "status.timerStarted" : "status.bHeld");
+  setTrainingStatusKey(
+    session.mode === "timer"
+      ? "status.timerStarted"
+      : session.mode === "trainSpeedcap"
+        ? "status.speedcapTraining"
+        : "status.bHeld"
+  );
 }
 
 function stopSession(reasonKey = "status.manualStop") {
@@ -578,6 +604,7 @@ function stopSession(reasonKey = "status.manualStop") {
     return;
   }
 
+  const wasActive = session.active;
   session.active = false;
   session.countdownActive = false;
   session.waitingForB = false;
@@ -594,6 +621,10 @@ function stopSession(reasonKey = "status.manualStop") {
   setSessionCue(t("cue.stop"), "stopped");
   setTrainingStatusKey(reasonKey);
   updateReview(analyzer.getSessionStats());
+
+  if (wasActive && analyzer.getSamples().length > 5) {
+    saveHistoryEntry(reasonKey);
+  }
 }
 
 function resetSession() {
@@ -645,12 +676,18 @@ function prepareAttempt(now) {
 }
 
 function updateSessionModeUi() {
-  const isHoldMode = dom.sessionModeSelect.value === "holdB";
+  const isHoldMode = dom.sessionModeSelect.value === "holdB" || dom.sessionModeSelect.value === "trainSpeedcap";
   dom.timerOptions.classList.toggle("hidden", isHoldMode);
   dom.startButton.textContent = t(isHoldMode ? "button.armB" : "button.start");
 
   if (!session.active && !session.countdownActive && !session.waitingForB) {
-    setTrainingStatusKey(isHoldMode ? "status.detectB" : "status.ready");
+    setTrainingStatusKey(
+      dom.sessionModeSelect.value === "trainSpeedcap"
+        ? "status.detectSpeedcapTrain"
+        : isHoldMode
+          ? "status.detectB"
+          : "status.ready"
+    );
     setSessionCue(isHoldMode ? "B" : t("cue.ready"), isHoldMode ? "armed" : "");
   }
 }
@@ -822,11 +859,17 @@ function loop(now) {
       time: now,
       x: input.x,
       y: input.y,
-      bPressed: input.bPressed
+      bPressed: input.bPressed,
+      hazardPressed: input.hazardPressed,
+      hazardButtons: input.hazardButtons
     });
   }
 
-  const stats = session.active ? analyzer.getLiveStats(2600) : analyzer.getSessionStats();
+  const stats = analyzer.getSessionStats();
+
+  if (session.active && session.mode === "trainSpeedcap" && stats.speedcap.exceeded) {
+    stopSession("status.speedcapExceeded");
+  }
 
   if (session.active && now - session.lastChartUpdate > 92) {
     pushChartValues(now, stats);
@@ -917,11 +960,13 @@ function updateUi(stats, input, now) {
   dom.bValue.textContent = input.bValue.toFixed(2);
   dom.ratingLabel.textContent = getLocalizedRatingLabel(stats.score);
   dom.scoreValue.textContent = Math.round(stats.score).toString();
-  dom.axisAngle.textContent = `${Math.round((stats.axis.angle * 180) / Math.PI)}°`;
+  dom.axisAngle.textContent = `${Math.round((stats.axis.angle * 180) / Math.PI)} deg`;
   dom.oscValue.textContent = stats.frequency.oscillationsPerSecond.toFixed(2);
   dom.dirValue.textContent = stats.frequency.directionChangesPerSecond.toFixed(2);
-  dom.centerValue.textContent = stats.center.averageDistance.toFixed(3);
+  dom.blssSpeedValue.textContent = stats.speedcap.currentSpeed.toFixed(2);
+  dom.speedcapTimeValue.textContent = formatCapTime(stats);
   dom.releaseValue.textContent = String(stats.bHold.releaseCount);
+  updateSpeedcapGauge(stats);
   dom.sessionTime.textContent = getSessionClock(now);
   updateSubscores(stats.subScores);
 
@@ -950,6 +995,36 @@ function getSessionClock(now) {
   return formatDuration(analyzer.getDurationMs());
 }
 
+function updateSpeedcapGauge(stats) {
+  const progressPercent = Math.round(Math.min(stats.speedcap.rawProgress ?? stats.speedcap.progress, 1) * 100);
+  const visualPercent = clamp((stats.speedcap.rawProgress ?? stats.speedcap.progress) * 100, 0, 122);
+  dom.speedcapPercent.textContent = `${progressPercent}%`;
+  dom.speedcapFill.style.width = `${Math.min(visualPercent, 100)}%`;
+  dom.speedcapFill.style.background = stats.speedcap.exceeded
+    ? "linear-gradient(90deg, var(--amber), var(--red))"
+    : "linear-gradient(90deg, var(--cyan), var(--green))";
+  dom.speedcapCurrent.textContent = `${stats.speedcap.currentSpeed.toFixed(2)} m/s`;
+  dom.speedcapEta.textContent = formatCapTime(stats);
+  dom.requiredWigglesValue.textContent = Math.round(stats.speedcap.requiredWiggles).toString();
+  dom.speedcapStatus.textContent = stats.speedcap.exceeded
+    ? t("speedcap.exceeded")
+    : stats.speedcap.reached
+      ? t("speedcap.reached")
+      : t("speedcap.building");
+}
+
+function formatCapTime(stats) {
+  if (stats.speedcap.reached) {
+    return `${stats.speedcap.timeToCapSec.toFixed(2)} s`;
+  }
+
+  if (stats.speedcap.estimatedTimeToCapSec > 0) {
+    return `${stats.speedcap.estimatedTimeToCapSec.toFixed(2)} s*`;
+  }
+
+  return "--";
+}
+
 function getLocalizedRatingLabel(score) {
   return t(`rating.${getRatingTier(score)}`);
 }
@@ -970,10 +1045,81 @@ function updateReview(stats) {
   dom.sampleCount.textContent = t("review.samples", { count: stats.sampleCount });
   dom.finalScore.textContent = Math.round(stats.score).toString();
   dom.finalDuration.textContent = formatDuration(stats.durationMs);
-  dom.rhythmVariance.textContent = stats.rhythm.intervalVariance.toFixed(4);
-  dom.pauseValue.textContent = String(stats.rhythm.pauseCount);
+  dom.finalSpeedcapTime.textContent = formatCapTime(stats);
+  dom.badInputsValue.textContent = String(stats.inputs.forbiddenPressCount);
   dom.contourValue.textContent = `${Math.round(stats.center.contourPenalty * 100)}%`;
   dom.stopReasonValue.textContent = t(session.lastStopReasonKey);
+}
+
+function loadHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_STORAGE_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveHistoryEntry(reasonKey) {
+  const stats = analyzer.getSessionStats();
+  const entry = {
+    id: Date.now(),
+    date: new Date().toISOString(),
+    mode: session.mode,
+    score: Math.round(stats.score),
+    durationMs: stats.durationMs,
+    averageOsc: stats.speedcap.averageAccelerationOscillationsPerSecond,
+    finalSpeed: stats.speedcap.currentSpeed,
+    speedcapReached: stats.speedcap.reached,
+    capTimeSec: stats.speedcap.reached ? stats.speedcap.timeToCapSec : stats.speedcap.estimatedTimeToCapSec,
+    badInputs: stats.inputs.forbiddenPressCount,
+    sideFlips: stats.direction.sideFlipCount,
+    bReleases: stats.bHold.releaseCount,
+    stopReasonKey: reasonKey
+  };
+  const history = [entry, ...loadHistory()].slice(0, HISTORY_LIMIT);
+  localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+  renderHistory();
+}
+
+function clearHistory() {
+  localStorage.removeItem(HISTORY_STORAGE_KEY);
+  renderHistory();
+}
+
+function renderHistory() {
+  const history = loadHistory();
+  dom.historyList.replaceChildren();
+
+  if (history.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "history-empty";
+    empty.textContent = t("history.empty");
+    dom.historyList.append(empty);
+    return;
+  }
+
+  for (const entry of history.slice(0, 10)) {
+    const row = document.createElement("div");
+    row.className = "history-row";
+    row.innerHTML = `
+      <div><span>${escapeHtml(new Date(entry.date).toLocaleString())}</span><strong>${escapeHtml(t(`mode.${entry.mode}`) || entry.mode)}</strong></div>
+      <div><span>${escapeHtml(t("review.finalScore"))}</span><strong>${entry.score}</strong></div>
+      <div><span>${escapeHtml(t("metric.osc"))}</span><strong>${Number(entry.averageOsc).toFixed(2)}</strong></div>
+      <div><span>${escapeHtml(t("metric.blssSpeed"))}</span><strong>${Number(entry.finalSpeed).toFixed(2)} m/s</strong></div>
+      <div><span>${escapeHtml(t("review.speedcapTime"))}</span><strong>${Number(entry.capTimeSec || 0).toFixed(2)} s${entry.speedcapReached ? "" : "*"}</strong></div>
+      <div><span>${escapeHtml(t("review.stopReason"))}</span><strong>${escapeHtml(t(entry.stopReasonKey))}</strong></div>
+    `;
+    dom.historyList.append(row);
+  }
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function renderStick(input, stats) {
@@ -1102,12 +1248,12 @@ function renderCharts() {
     color: "#65d982",
     formatValue: (value) => value.toFixed(2)
   });
-  drawLineChart(dom.charts.stability, session.charts.stability, {
-    label: t("chart.stability"),
+  drawLineChart(dom.charts.speed, session.charts.speed, {
+    label: t("chart.speed"),
     min: 0,
-    max: 100,
+    max: 110,
     color: "#e0b85b",
-    formatValue: (value) => `${Math.round(value)}`
+    formatValue: (value) => value.toFixed(1)
   });
   drawLineChart(dom.charts.center, session.charts.center, {
     label: t("chart.center"),
