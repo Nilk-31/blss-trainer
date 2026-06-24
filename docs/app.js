@@ -1,7 +1,7 @@
-import { BLSSAnalyzer, getRatingTier } from "../shared/blssAnalyzer.mjs";
-import { GamepadReader } from "./gamepad.mjs";
-import { drawLineChart, fitCanvas, trimSeries } from "./charts.mjs";
-import { DEFAULT_LANGUAGE, TRANSLATIONS } from "./i18n.mjs";
+import { BLSSAnalyzer, getRatingTier } from "./shared/blssAnalyzer.js?v=7311f82-mqsjux2l";
+import { GamepadReader } from "./gamepad.js?v=7311f82-mqsjux2l";
+import { drawLineChart, fitCanvas, trimSeries } from "./charts.js?v=7311f82-mqsjux2l";
+import { DEFAULT_LANGUAGE, TRANSLATIONS } from "./i18n.js?v=7311f82-mqsjux2l";
 
 const STICK_CALIBRATION_STEPS = [
   { key: "up", labelKey: "direction.up" },

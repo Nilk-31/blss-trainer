@@ -1,7 +1,7 @@
-import { BLSSAnalyzer, getRatingTier } from "./shared/blssAnalyzer.mjs?v=145cd14-mp8ghkau";
-import { GamepadReader } from "./gamepad.mjs?v=145cd14-mp8ghkau";
-import { drawLineChart, fitCanvas, trimSeries } from "./charts.mjs?v=145cd14-mp8ghkau";
-import { DEFAULT_LANGUAGE, TRANSLATIONS } from "./i18n.mjs?v=145cd14-mp8ghkau";
+import { BLSSAnalyzer, getRatingTier } from "./shared/blssAnalyzer.mjs?v=7311f82-mqsjux2l";
+import { GamepadReader } from "./gamepad.mjs?v=7311f82-mqsjux2l";
+import { drawLineChart, fitCanvas, trimSeries } from "./charts.mjs?v=7311f82-mqsjux2l";
+import { DEFAULT_LANGUAGE, TRANSLATIONS } from "./i18n.mjs?v=7311f82-mqsjux2l";
 
 const STICK_CALIBRATION_STEPS = [
   { key: "up", labelKey: "direction.up" },
@@ -16,6 +16,16 @@ const STICK_CENTER_STOP_RADIUS = 0.16;
 const RUN_START_GRACE_MS = 550;
 const HISTORY_STORAGE_KEY = "blss-run-history";
 const HISTORY_LIMIT = 30;
+const RUN_B_HOLD_ARM_MS = 350;
+const RUN_WIGGLE_WINDOW_MS = 1000;
+const RUN_WIGGLE_MIN_SAMPLES = 12;
+const RUN_WIGGLE_MIN_CROSSINGS = 3;
+const RUN_WIGGLE_MIN_OSCILLATIONS_PER_SECOND = 2;
+const RUN_WIGGLE_MIN_SIDE_REACH = 0.35;
+const RUN_WIGGLE_MIN_RANGE = 0.9;
+const RUN_WIGGLE_MIN_LINEARITY_RATIO = 2.8;
+const RUN_WIGGLE_MAX_PERPENDICULAR_STD = 0.22;
+const RUN_WIGGLE_MIN_CROSSING_DELTA = 0.12;
 
 const analyzer = new BLSSAnalyzer();
 const gamepadReader = new GamepadReader();
@@ -87,6 +97,8 @@ const session = {
   active: false,
   countdownActive: false,
   waitingForB: false,
+  runScanning: false,
+  waitingForWiggle: false,
   mode: "timer",
   startedAt: 0,
   endsAt: 0,
@@ -103,6 +115,7 @@ const session = {
   lastChartUpdate: 0,
   lastGamepadRefresh: 0,
   lastHeatmapRender: 0,
+  runWiggleTracker: createRunWiggleTracker(),
   liveTrail: [],
   charts: {
     frequency: [],
@@ -247,7 +260,9 @@ function refreshLocalizedSessionText() {
         ? "status.timerStarted"
         : session.mode === "trainSpeedcap"
           ? "status.speedcapTraining"
-          : "status.bHeld"
+          : session.mode === "run"
+            ? "status.runActive"
+            : "status.bHeld"
     );
     return;
   }
@@ -260,6 +275,18 @@ function refreshLocalizedSessionText() {
   if (session.waitingForB) {
     dom.sessionBadge.textContent = t("status.armed");
     setTrainingStatusKey(session.mode === "trainSpeedcap" ? "status.waitSpeedcapTrain" : "status.waitB");
+    return;
+  }
+
+  if (session.waitingForWiggle) {
+    dom.sessionBadge.textContent = t("status.armed");
+    setTrainingStatusKey("status.runAwaitWiggle");
+    return;
+  }
+
+  if (session.runScanning) {
+    dom.sessionBadge.textContent = t("status.armed");
+    setTrainingStatusKey("status.runScanning");
     return;
   }
 
@@ -283,7 +310,7 @@ function maybeShowFirstRunTutorial() {
 }
 
 function startButtonCalibration() {
-  if (session.active || session.countdownActive || session.waitingForB) {
+  if (isSessionBusy()) {
     stopSession("status.calibration");
   }
 
@@ -303,7 +330,7 @@ function startButtonCalibration() {
 }
 
 function startStickCalibration() {
-  if (session.active || session.countdownActive || session.waitingForB) {
+  if (isSessionBusy()) {
     stopSession("status.calibration");
   }
 
@@ -548,6 +575,12 @@ function startSession() {
   session.lastBPressed = gamepadReader.read().bPressed;
   setSessionControlsLocked(true);
 
+  if (mode === "run") {
+    startRunScanner();
+    updateReview(analyzer.getSessionStats());
+    return;
+  }
+
   if (mode === "holdB" || mode === "trainSpeedcap") {
     session.waitingForB = true;
     session.lastStopReasonKey = "status.waitB";
@@ -574,10 +607,39 @@ function startSession() {
   updateReview(analyzer.getSessionStats());
 }
 
+function startRunScanner() {
+  session.runScanning = true;
+  session.waitingForWiggle = false;
+  session.runWiggleTracker = createRunWiggleTracker();
+  session.lastStopReasonKey = "status.runScanning";
+  dom.sessionBadge.textContent = t("status.armed");
+  dom.sessionBadge.className = "badge armed";
+  dom.startButton.disabled = true;
+  dom.stopButton.disabled = false;
+  setSessionCue("B", "armed");
+  setTrainingStatusKey("status.runScanning");
+}
+
+function resumeRunScanner(reasonKey) {
+  session.runScanning = true;
+  session.waitingForWiggle = false;
+  session.runWiggleTracker = createRunWiggleTracker();
+  session.lastStopReasonKey = "status.runScanning";
+  dom.sessionBadge.textContent = t("status.armed");
+  dom.sessionBadge.className = "badge armed";
+  dom.startButton.disabled = true;
+  dom.stopButton.disabled = false;
+  setSessionControlsLocked(true);
+  setSessionCue("B", "armed");
+  setTrainingStatusKey("status.runStoppedScanning", { reason: t(reasonKey) });
+}
+
 function startActiveRun(now) {
   session.active = true;
   session.countdownActive = false;
   session.waitingForB = false;
+  session.runScanning = false;
+  session.waitingForWiggle = false;
   session.startedAt = now;
   session.endsAt = session.mode === "timer" ? now + session.targetDurationMs : 0;
   session.goCueUntil = now + 650;
@@ -595,19 +657,24 @@ function startActiveRun(now) {
       ? "status.timerStarted"
       : session.mode === "trainSpeedcap"
         ? "status.speedcapTraining"
-        : "status.bHeld"
+        : session.mode === "run"
+          ? "status.runActive"
+          : "status.bHeld"
   );
 }
 
 function stopSession(reasonKey = "status.manualStop") {
-  if (!session.active && !session.countdownActive && !session.waitingForB) {
+  if (!isSessionBusy()) {
     return;
   }
 
   const wasActive = session.active;
+  const shouldResumeRunScanner = session.mode === "run" && wasActive && reasonKey !== "status.manualStop";
   session.active = false;
   session.countdownActive = false;
   session.waitingForB = false;
+  session.runScanning = false;
+  session.waitingForWiggle = false;
   session.endsAt = 0;
   session.countdownEndsAt = 0;
   session.bReleaseStartedAt = 0;
@@ -625,6 +692,10 @@ function stopSession(reasonKey = "status.manualStop") {
   if (wasActive && analyzer.getSamples().length > 5) {
     saveHistoryEntry(reasonKey);
   }
+
+  if (shouldResumeRunScanner) {
+    resumeRunScanner(reasonKey);
+  }
 }
 
 function resetSession() {
@@ -635,6 +706,8 @@ function resetSession() {
   session.active = false;
   session.countdownActive = false;
   session.waitingForB = false;
+  session.runScanning = false;
+  session.waitingForWiggle = false;
   session.startedAt = 0;
   session.endsAt = 0;
   session.countdownStartedAt = 0;
@@ -643,6 +716,7 @@ function resetSession() {
   session.guardGraceUntil = 0;
   session.bReleaseStartedAt = 0;
   session.centerStartedAt = 0;
+  session.runWiggleTracker = createRunWiggleTracker();
   session.lastStopReasonKey = "status.ready";
   session.liveTrail = [];
   dom.sessionBadge.textContent = t("status.idle");
@@ -663,6 +737,8 @@ function prepareAttempt(now) {
   session.active = false;
   session.countdownActive = false;
   session.waitingForB = false;
+  session.runScanning = false;
+  session.waitingForWiggle = false;
   session.startedAt = 0;
   session.endsAt = 0;
   session.countdownStartedAt = now;
@@ -671,24 +747,29 @@ function prepareAttempt(now) {
   session.guardGraceUntil = 0;
   session.bReleaseStartedAt = 0;
   session.centerStartedAt = 0;
+  session.runWiggleTracker = createRunWiggleTracker();
   session.liveTrail = [];
   renderHeatmap();
 }
 
 function updateSessionModeUi() {
+  const isRunMode = dom.sessionModeSelect.value === "run";
   const isHoldMode = dom.sessionModeSelect.value === "holdB" || dom.sessionModeSelect.value === "trainSpeedcap";
-  dom.timerOptions.classList.toggle("hidden", isHoldMode);
-  dom.startButton.textContent = t(isHoldMode ? "button.armB" : "button.start");
+  const hidesTimer = isHoldMode || isRunMode;
+  dom.timerOptions.classList.toggle("hidden", hidesTimer);
+  dom.startButton.textContent = t(isRunMode ? "button.scanRun" : isHoldMode ? "button.armB" : "button.start");
 
-  if (!session.active && !session.countdownActive && !session.waitingForB) {
+  if (!isSessionBusy()) {
     setTrainingStatusKey(
-      dom.sessionModeSelect.value === "trainSpeedcap"
+      isRunMode
+        ? "status.runReady"
+        : dom.sessionModeSelect.value === "trainSpeedcap"
         ? "status.detectSpeedcapTrain"
         : isHoldMode
           ? "status.detectB"
           : "status.ready"
     );
-    setSessionCue(isHoldMode ? "B" : t("cue.ready"), isHoldMode ? "armed" : "");
+    setSessionCue(isRunMode || isHoldMode ? "B" : t("cue.ready"), hidesTimer ? "armed" : "");
   }
 }
 
@@ -696,6 +777,16 @@ function setSessionControlsLocked(locked) {
   dom.sessionModeSelect.disabled = locked;
   dom.countdownSelect.disabled = locked;
   dom.sessionDurationInput.disabled = locked;
+}
+
+function isSessionBusy() {
+  return (
+    session.active ||
+    session.countdownActive ||
+    session.waitingForB ||
+    session.runScanning ||
+    session.waitingForWiggle
+  );
 }
 
 function readCountdownMs() {
@@ -778,7 +869,180 @@ function clearCharts() {
   }
 }
 
+function processRunScanner(now, input) {
+  if (!session.runScanning && !session.waitingForWiggle) {
+    return;
+  }
+
+  if (!input.bPressed) {
+    if (session.waitingForWiggle) {
+      setTrainingStatusKey("status.runHoldLost");
+    }
+
+    session.runScanning = true;
+    session.waitingForWiggle = false;
+    session.runWiggleTracker = createRunWiggleTracker();
+    setSessionCue("B", "armed");
+    return;
+  }
+
+  if (session.runScanning) {
+    session.runScanning = false;
+    session.waitingForWiggle = true;
+    session.runWiggleTracker = createRunWiggleTracker();
+  }
+
+  const detection = updateRunWiggleTracker(now, input);
+
+  if (!detection.armed) {
+    setSessionCue("B", "armed");
+    setTrainingStatusKey("status.runArming");
+    return;
+  }
+
+  setSessionCue("WIGGLE", "armed");
+  setTrainingStatusKey("status.runAwaitWiggle");
+
+  if (detection.detected) {
+    prepareAttempt(now);
+    session.mode = "run";
+    startActiveRun(now);
+  }
+}
+
+function createRunWiggleTracker() {
+  return {
+    heldSince: 0,
+    samples: []
+  };
+}
+
+function updateRunWiggleTracker(now, input) {
+  const tracker = session.runWiggleTracker;
+
+  if (!tracker.heldSince) {
+    tracker.heldSince = now;
+  }
+
+  tracker.samples.push({
+    time: now,
+    x: input.x,
+    y: input.y
+  });
+
+  const cutoff = now - RUN_WIGGLE_WINDOW_MS;
+  while (tracker.samples.length > 0 && tracker.samples[0].time < cutoff) {
+    tracker.samples.shift();
+  }
+
+  if (now - tracker.heldSince < RUN_B_HOLD_ARM_MS) {
+    return { armed: false, detected: false };
+  }
+
+  const armedAt = tracker.heldSince + RUN_B_HOLD_ARM_MS;
+  const armedSamples = tracker.samples.filter((sample) => sample.time >= armedAt);
+
+  return {
+    armed: true,
+    detected: detectClearRunWiggle(armedSamples)
+  };
+}
+
+function detectClearRunWiggle(samples) {
+  if (samples.length < RUN_WIGGLE_MIN_SAMPLES) {
+    return false;
+  }
+
+  const axis = estimateRunWiggleAxis(samples);
+  const projected = [];
+  const perpendicular = [];
+
+  for (const sample of samples) {
+    projected.push(sample.x * axis.x + sample.y * axis.y);
+    perpendicular.push(-sample.x * axis.y + sample.y * axis.x);
+  }
+
+  const projectedRange = maxValue(projected) - minValue(projected);
+  const sideReach = Math.min(Math.abs(minValue(projected)), Math.abs(maxValue(projected)));
+  const projectedStd = standardDeviation(projected);
+  const perpendicularStd = standardDeviation(perpendicular);
+  const linearityRatio = projectedStd / Math.max(perpendicularStd, 0.001);
+
+  if (
+    projectedRange < RUN_WIGGLE_MIN_RANGE ||
+    sideReach < RUN_WIGGLE_MIN_SIDE_REACH ||
+    linearityRatio < RUN_WIGGLE_MIN_LINEARITY_RATIO ||
+    perpendicularStd > RUN_WIGGLE_MAX_PERPENDICULAR_STD
+  ) {
+    return false;
+  }
+
+  const crossings = detectRunCenterCrossings(samples, movingAverage(projected, 3));
+
+  if (crossings.length < RUN_WIGGLE_MIN_CROSSINGS) {
+    return false;
+  }
+
+  const spanSec = (crossings.at(-1) - crossings[0]) / 1000;
+
+  if (spanSec <= 0) {
+    return false;
+  }
+
+  const oscillationsPerSecond = ((crossings.length - 1) / 2) / spanSec;
+
+  return oscillationsPerSecond > RUN_WIGGLE_MIN_OSCILLATIONS_PER_SECOND;
+}
+
+function estimateRunWiggleAxis(samples) {
+  const mx = average(samples.map((sample) => sample.x));
+  const my = average(samples.map((sample) => sample.y));
+  let xx = 0;
+  let yy = 0;
+  let xy = 0;
+
+  for (const sample of samples) {
+    const dx = sample.x - mx;
+    const dy = sample.y - my;
+    xx += dx * dx;
+    yy += dy * dy;
+    xy += dx * dy;
+  }
+
+  if (xx + yy < 0.0001) {
+    return { x: 1, y: 0 };
+  }
+
+  const angle = 0.5 * Math.atan2(2 * xy, xx - yy);
+
+  return {
+    x: Math.cos(angle),
+    y: Math.sin(angle)
+  };
+}
+
+function detectRunCenterCrossings(samples, projected) {
+  const crossings = [];
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = projected[index - 1];
+    const current = projected[index];
+    const crossed = previous === 0 || current === 0 || Math.sign(previous) !== Math.sign(current);
+
+    if (!crossed || Math.abs(current - previous) < RUN_WIGGLE_MIN_CROSSING_DELTA) {
+      continue;
+    }
+
+    const alpha = clamp(-previous / (current - previous), 0, 1);
+    crossings.push(samples[index - 1].time + alpha * (samples[index].time - samples[index - 1].time));
+  }
+
+  return crossings;
+}
+
 function processSessionAutomation(now, input) {
+  processRunScanner(now, input);
+
   if (session.countdownActive) {
     if (now >= session.countdownEndsAt) {
       startActiveRun(now);
@@ -867,7 +1131,7 @@ function loop(now) {
 
   const stats = analyzer.getSessionStats();
 
-  if (session.active && session.mode === "trainSpeedcap" && stats.speedcap.exceeded) {
+  if (session.active && (session.mode === "trainSpeedcap" || session.mode === "run") && stats.speedcap.exceeded) {
     stopSession("status.speedcapExceeded");
   }
 
@@ -1292,6 +1556,52 @@ function scoreColor(value) {
   }
 
   return "#e26767";
+}
+
+function movingAverage(values, windowSize) {
+  const result = [];
+  const radius = Math.floor(windowSize / 2);
+
+  for (let index = 0; index < values.length; index += 1) {
+    const start = Math.max(0, index - radius);
+    const end = Math.min(values.length - 1, index + radius);
+    let sum = 0;
+    let count = 0;
+
+    for (let cursor = start; cursor <= end; cursor += 1) {
+      sum += values[cursor];
+      count += 1;
+    }
+
+    result.push(sum / count);
+  }
+
+  return result;
+}
+
+function average(values) {
+  if (!values || values.length === 0) {
+    return 0;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function standardDeviation(values) {
+  if (!values || values.length < 2) {
+    return 0;
+  }
+
+  const avg = average(values);
+  return Math.sqrt(average(values.map((value) => Math.pow(value - avg, 2))));
+}
+
+function minValue(values) {
+  return values.reduce((min, value) => Math.min(min, value), Infinity);
+}
+
+function maxValue(values) {
+  return values.reduce((max, value) => Math.max(max, value), -Infinity);
 }
 
 function clamp(value, min, max) {

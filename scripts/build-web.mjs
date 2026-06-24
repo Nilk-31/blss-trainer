@@ -14,8 +14,17 @@ const buildVersion = await getBuildVersion();
 await fs.rm(outputDir, { recursive: true, force: true });
 await fs.mkdir(path.join(outputDir, "shared"), { recursive: true });
 
-for (const fileName of ["styles.css", "i18n.mjs", "gamepad.mjs", "charts.mjs", "preview.png"]) {
+for (const fileName of ["styles.css", "preview.png"]) {
   await fs.copyFile(path.join(rendererDir, fileName), path.join(outputDir, fileName));
+}
+
+for (const [sourceName, outputName] of [
+  ["i18n.mjs", "i18n.js"],
+  ["gamepad.mjs", "gamepad.js"],
+  ["charts.mjs", "charts.js"]
+]) {
+  await fs.copyFile(path.join(rendererDir, sourceName), path.join(outputDir, outputName));
+  await fs.copyFile(path.join(rendererDir, sourceName), path.join(outputDir, sourceName));
 }
 
 const indexSource = await fs.readFile(path.join(rendererDir, "index.html"), "utf8");
@@ -23,10 +32,18 @@ await fs.writeFile(
   path.join(outputDir, "index.html"),
   indexSource
     .replace('./styles.css"', `./styles.css?v=${buildVersion}"`)
-    .replace('./app.mjs"', `./app.mjs?v=${buildVersion}"`)
+    .replace('./app.mjs"', `./app.js?v=${buildVersion}"`)
 );
 
 const appSource = await fs.readFile(path.join(rendererDir, "app.mjs"), "utf8");
+await fs.writeFile(
+  path.join(outputDir, "app.js"),
+  appSource
+    .replace("../shared/blssAnalyzer.mjs", `./shared/blssAnalyzer.js?v=${buildVersion}`)
+    .replace("./gamepad.mjs", `./gamepad.js?v=${buildVersion}`)
+    .replace("./charts.mjs", `./charts.js?v=${buildVersion}`)
+    .replace("./i18n.mjs", `./i18n.js?v=${buildVersion}`)
+);
 await fs.writeFile(
   path.join(outputDir, "app.mjs"),
   appSource
@@ -36,6 +53,10 @@ await fs.writeFile(
     .replace("./i18n.mjs", `./i18n.mjs?v=${buildVersion}`)
 );
 
+await fs.copyFile(
+  path.join(sharedDir, "blssAnalyzer.mjs"),
+  path.join(outputDir, "shared", "blssAnalyzer.js")
+);
 await fs.copyFile(
   path.join(sharedDir, "blssAnalyzer.mjs"),
   path.join(outputDir, "shared", "blssAnalyzer.mjs")

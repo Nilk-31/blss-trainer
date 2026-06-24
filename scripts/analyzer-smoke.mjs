@@ -19,9 +19,18 @@ const weak = generateSession({
   bDropEveryMs: 1200,
   hazardEveryMs: 2100
 });
+const fastClean = generateSession({
+  durationMs: 15000,
+  frequencyHz: 8.4,
+  amplitude: 0.86,
+  centerNoise: 0.018,
+  sideOffset: 0.16,
+  bDropEveryMs: 0
+});
 
 const goodStats = analyzeSamples(good);
 const weakStats = analyzeSamples(weak);
+const fastCleanStats = analyzeSamples(fastClean);
 const centeredAccelerationStats = analyzeSamples(
   generateSession({
     durationMs: 9000,
@@ -78,6 +87,28 @@ const expectedCoastingSpeed = expectedDecaySpeed(
   preCoastingStats.speedcap.currentSpeed,
   coastingStats.speedcap.pauseSlowdownMs / 1000
 );
+const gentleSideCrossoverStats = analyzeSamples(
+  generateSession({
+    durationMs: 15000,
+    frequencyHz: 5,
+    amplitude: 0.86,
+    centerNoise: 0.018,
+    sideFlip: true,
+    sideFlipAmplitude: 0.18,
+    bDropEveryMs: 0
+  })
+);
+const hardSideCrossoverStats = analyzeSamples(
+  generateSession({
+    durationMs: 15000,
+    frequencyHz: 5,
+    amplitude: 0.86,
+    centerNoise: 0.018,
+    sideFlip: true,
+    sideFlipAmplitude: 0.45,
+    bDropEveryMs: 0
+  })
+);
 
 console.log("Good score:", Math.round(goodStats.score));
 console.log("Weak score:", Math.round(weakStats.score));
@@ -91,8 +122,12 @@ if (weakStats.score >= goodStats.score) {
   throw new Error("Expected weak synthetic session to score lower than strong session");
 }
 
-if (goodStats.subScores.frequency <= weakStats.subScores.frequency) {
-  throw new Error("Expected optimal 5 Osc/s session to beat overspeed session on frequency");
+if (fastCleanStats.subScores.frequency < 99) {
+  throw new Error("Expected clean sessions at or above 5 Osc/s to keep a perfect frequency subscore");
+}
+
+if (fastCleanStats.speedcap.timeToCapSec > 0 && fastCleanStats.speedcap.timeToCapSec < 11.8) {
+  throw new Error("Expected acceleration above 5 Osc/s to stay capped near the 12s best possible result");
 }
 
 if (goodStats.speedcap.timeToCapSec < 12) {
@@ -113,6 +148,14 @@ if (coastingStats.speedcap.pauseSlowdownMs < 8500) {
 
 if (instantCoastingStats.speedcap.pauseSlowdownMs < 200) {
   throw new Error("Expected stopped wiggle with held B to decay immediately without waiting for a slow Osc/s timeout");
+}
+
+if (gentleSideCrossoverStats.direction.sideFlipCount !== 0) {
+  throw new Error("Expected small opposite-side crossings near center to be tolerated");
+}
+
+if (hardSideCrossoverStats.direction.sideFlipCount === 0) {
+  throw new Error("Expected large opposite-side crossings to count as Link turn risk");
 }
 
 if (Math.abs(coastingStats.speedcap.currentSpeed - expectedCoastingSpeed) > 0.6) {
@@ -140,6 +183,7 @@ function generateSession({
   centerNoise,
   sideOffset = 0,
   sideFlip = false,
+  sideFlipAmplitude = 0.35,
   bDropEveryMs,
   hazardEveryMs = 0,
   stopWiggleAtMs = Infinity
@@ -151,7 +195,7 @@ function generateSession({
     const t = time / 1000;
     const coasting = time > stopWiggleAtMs;
     const phase = Math.sin(Math.PI * 2 * frequencyHz * t);
-    const steeringSide = sideFlip ? Math.sin(Math.PI * 2 * 0.22 * t) * 0.35 : sideOffset;
+    const steeringSide = sideFlip ? Math.sin(Math.PI * 2 * 0.22 * t) * sideFlipAmplitude : sideOffset;
     const wobble = coasting ? steeringSide : steeringSide + Math.sin(Math.PI * 2 * frequencyHz * 0.5 * t) * centerNoise;
     const drop = bDropEveryMs > 0 && Math.floor(time / bDropEveryMs) % 2 === 1 && time % bDropEveryMs < 58;
     const hazard = hazardEveryMs > 0 && Math.floor(time / hazardEveryMs) % 2 === 1 && time % hazardEveryMs < 220;

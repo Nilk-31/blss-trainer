@@ -14,9 +14,12 @@ const DEFAULTS = {
   overspeedExtraWigglesPerOsc: 10,
   coastingStickSpeedThreshold: 0.22,
   speedcapCenterPenaltyRadius: 0.42,
-  speedcapMinimumCenterAcceleration: 0.45,
+  speedcapMinimumCenterAcceleration: 0.18,
+  speedcapCenterFalloff: 1.2,
+  speedcapCenterFalloffPower: 1.35,
   speedcapFullHalfWiggleAmplitude: 1.35,
   speedcapMinimumAmplitudeAcceleration: 0.35,
+  directionSideMargin: 0.28,
   coastingDecayBaseSpeed: 1.521,
   coastingDecayTimeConstantSec: 31.874
 };
@@ -159,7 +162,7 @@ export function analyzeSamples(samples, options = {}) {
   const oscillationsPerSecond = directionChangesPerSecond / 2;
   const bHold = analyzeBHold(clean);
   const center = analyzeCenter(crossings, turns, opts);
-  const direction = analyzeDirectionSide(perpendicular, radial);
+  const direction = analyzeDirectionSide(perpendicular, radial, opts);
   const inputs = analyzeForbiddenInputs(clean);
   const speedcap = simulateSpeedcap(clean, turns, crossings, radial, opts);
   const frequencyScore = frequencySubscore(oscillationsPerSecond, opts);
@@ -385,15 +388,23 @@ function speedcapAccelerationQuality(previousTurn, turn, crossings, opts) {
   }
 
   const centerDistance = centerDistanceBetweenTurns(previousTurn, turn, crossings, opts);
-  const centerPenalty = smoothStep(opts.centerIdealRadius, opts.speedcapCenterPenaltyRadius, centerDistance);
-  const centerFactor = 1 - (1 - opts.speedcapMinimumCenterAcceleration) * centerPenalty;
+  const centerFactor = speedcapCenterAccelerationFactor(centerDistance, opts);
   const halfWiggleAmplitude = Math.abs(turn.p - previousTurn.p);
+  const effectiveHalfWiggleAmplitude = halfWiggleAmplitude * centerFactor;
   const amplitudeFactor =
     opts.speedcapMinimumAmplitudeAcceleration +
     (1 - opts.speedcapMinimumAmplitudeAcceleration) *
-      smoothStep(opts.minTurnAmplitude, opts.speedcapFullHalfWiggleAmplitude, halfWiggleAmplitude);
+      smoothStep(opts.minTurnAmplitude, opts.speedcapFullHalfWiggleAmplitude, effectiveHalfWiggleAmplitude);
 
   return clamp(centerFactor * amplitudeFactor, 0, 1);
+}
+
+function speedcapCenterAccelerationFactor(centerDistance, opts) {
+  const penaltySpan = Math.max(opts.speedcapCenterPenaltyRadius - opts.centerIdealRadius, 0.001);
+  const normalizedDistance = Math.max(0, (centerDistance - opts.centerIdealRadius) / penaltySpan);
+  const falloff = opts.speedcapCenterFalloff * normalizedDistance ** opts.speedcapCenterFalloffPower;
+
+  return clamp(1 / (1 + falloff), opts.speedcapMinimumCenterAcceleration, 1);
 }
 
 function centerDistanceBetweenTurns(previousTurn, turn, crossings, opts) {
@@ -420,10 +431,7 @@ export function requiredWigglesForFrequency(oscillationsPerSecond, options = {})
     return opts.baseSpeedcapWiggles;
   }
 
-  const overspeedRequired =
-    opts.baseSpeedcapWiggles + (osc - opts.optimalOscillationsPerSecond) * opts.overspeedExtraWigglesPerOsc;
-
-  return Math.max(overspeedRequired, 12 * osc);
+  return opts.baseSpeedcapWiggles * (osc / opts.optimalOscillationsPerSecond);
 }
 
 function decayBlssSpeed(currentSpeed, elapsedSec, opts) {
@@ -443,8 +451,7 @@ function frequencySubscore(oscillationsPerSecond, opts) {
     return clamp(0.42 + 0.58 * smoothStep(1, opts.optimalOscillationsPerSecond, osc), 0, 1);
   }
 
-  const overspeed = osc - opts.optimalOscillationsPerSecond;
-  return clamp(Math.exp(-Math.pow(overspeed / 1.15, 2)), 0, 1);
+  return 1;
 }
 
 function computeRating(parts) {
@@ -551,11 +558,12 @@ function analyzeCenter(crossings, turns, opts) {
   };
 }
 
-function analyzeDirectionSide(perpendicular, radial) {
+function analyzeDirectionSide(perpendicular, radial, opts) {
   const sideSamples = [];
+  const margin = Math.max(0, opts.directionSideMargin);
 
   for (let index = 0; index < perpendicular.length; index += 1) {
-    if (radial[index] > 0.28 && Math.abs(perpendicular[index]) > 0.1) {
+    if (radial[index] > 0.28 && Math.abs(perpendicular[index]) > margin) {
       sideSamples.push(Math.sign(perpendicular[index]));
     }
   }

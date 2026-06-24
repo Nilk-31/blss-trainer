@@ -46,6 +46,7 @@ In the `Session` panel:
 - `3,2,1 + timer` starts after a countdown and records for the chosen duration.
 - `Hold B` arms the session, starts on the next B press, and stops when B is released.
 - `Train speedcap` starts on B press and challenges you to get close to 104.71 m/s without exceeding it.
+- `Run auto` starts after B has been held briefly and a clear back-and-forth wiggle above 2 Osc/s is detected, records the run, then returns to waiting for the next BLSS.
 
 During any active attempt, the session stops if B is released or if the left stick stays centered too long, because either state means the BLSS attempt has been lost. Pressing +, -, X, Y, L, or D-pad up/left/right is tracked as a BLSS-breaking input and lowers the score. The stop reason is shown in the session status and in the session analysis.
 
@@ -53,11 +54,11 @@ During any active attempt, the session stops if B is released or if the left sti
 
 The score now focuses on the essentials:
 
-- Wiggle frequency, with 5 Osc/s treated as the ideal target. Too slow is weaker, and too fast is penalized harder.
-- Simulated BLSS speed toward the 104.71 m/s speedcap. Between 1 and 5 Osc/s, the model uses 60 clean wiggles to reach cap; wiggles that miss the center or use shallow stick travel accelerate less. Above 5 Osc/s it adds extra required wiggles and never allows an estimated best time below 12 seconds.
+- Wiggle frequency, with 5 Osc/s treated as the minimum clean target. Too slow is weaker; 5 Osc/s or faster gets full frequency score.
+- Simulated BLSS speed toward the 104.71 m/s speedcap. Between 1 and 5 Osc/s, the model uses 60 clean wiggles to reach cap; acceleration drops progressively as the wiggle moves away from center because less of the stick travel is usable, and shallow stick travel accelerates less too. Above 5 Osc/s, acceleration is capped so the estimated best time does not go below 12 seconds.
 - Center crossing quality.
 - B hold quality.
-- Staying on the same steering side of the wiggle.
+- Staying on the same steering side of the wiggle, with a margin around center before Link is considered at risk of turning.
 - Avoiding inputs that disable BLSS.
 
 If the attempt ends before speedcap, BLSS Trainer estimates the time to cap from the average Osc/s.
